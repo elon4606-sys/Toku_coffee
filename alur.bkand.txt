@@ -1,0 +1,37 @@
+ADMIN
+  │
+  ├── produk/products.php
+  │       │
+  │       └── tabel produk
+  │              ├── nama_produk
+  │              ├── harga
+  │              ├── gambar
+  │              ├── kategori_id
+  │              └── stok
+  │
+  └── inventory.php
+          │
+          ├── inventory
+          ├── gudang
+          └── mutasi_stok
+                  │
+                  ▼
+             produk.stok
+                  │
+                  ▼
+       pelanggan/index.php
+                  │
+                  ├── tampil produk
+                  ├── tampil harga
+                  ├── tampil gambar
+                  ├── tampil kategori
+                  └── tampil stok
+                  │
+                  ▼
+           keranjang.php
+                  │
+                  ▼
+            checkout.php
+                  │
+                  ▼
+           pembayaran.php
