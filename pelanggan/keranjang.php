@@ -1093,6 +1093,76 @@ $totalBayar =
             line-height: 1.7;
         }
 
+        .user-avatar-wrapper {
+            position: relative;
+        }
+
+        .user-profile-btn {
+            border: none;
+            background: transparent;
+            padding: 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+
+        .user-profile-btn img {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .user-dropdown {
+            position: absolute;
+            top: 52px;
+            right: 0;
+            width: 180px;
+            background: #fff;
+            border-radius: 10px;
+            padding: 8px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, .15);
+
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-8px);
+
+            transition: .25s ease;
+            z-index: 9999;
+        }
+
+        .user-dropdown.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .user-dropdown a {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+
+            padding: 11px 12px;
+            border-radius: 7px;
+
+            text-decoration: none;
+            color: #443;
+            font-size: 14px;
+        }
+
+        .user-dropdown a:hover {
+            background: #f7f3ef;
+        }
+
+        .user-dropdown .logout-link {
+            color: #a94442;
+        }
+
+        .user-dropdown .logout-link:hover {
+            background: #fff0ef;
+        }
+
         /* =====================================================
            PROMO BOX
         ===================================================== */
@@ -2018,29 +2088,60 @@ $totalBayar =
 
                 <i class="fas fa-shopping-bag"></i>
 
-                <?php if ($jumlahKeranjang > 0): ?>
+                <span
+                    class="count"
+                    id="cartCount"
+                    style="<?= $jumlahKeranjang > 0 ? '' : 'display:none;' ?>">
 
-                    <span class="count">
-                        <?= $jumlahKeranjang ?>
-                    </span>
+                    <?= $jumlahKeranjang ?>
 
-                <?php endif; ?>
+                </span>
 
             </a>
 
+
             <div class="user-info">
 
-                <a
-                    href="akun-pelanggan.php"
-                    class="user-profile-link"
-                    title="Akun Saya">
+                <!-- AVATAR -->
+                <div class="user-avatar-wrapper">
 
-                    <img
-                        src="https://ui-avatars.com/api/?name=<?= $avatarName ?>&background=443&color=fff"
-                        alt="Profil">
+                    <button
+                        type="button"
+                        class="user-profile-btn"
+                        id="userProfileBtn">
 
-                </a>
+                        <img
+                            src="https://ui-avatars.com/api/?name=<?= $avatarName ?>&background=443&color=fff"
+                            alt="Profil">
 
+                    </button>
+
+
+                    <!-- DROPDOWN -->
+                    <div
+                        class="user-dropdown"
+                        id="userDropdown">
+
+                        <a href="akun-pelanggan.php">
+                            <i class="fas fa-user"></i>
+                            Akun Saya
+                        </a>
+
+                        <a
+                            href="../login/logout.php"
+                            class="logout-link">
+
+                            <i class="fas fa-sign-out-alt"></i>
+                            Logout
+
+                        </a>
+
+                    </div>
+
+                </div>
+
+
+                <!-- DATA USER -->
                 <div class="user-data">
 
                     <h4>
@@ -2897,7 +2998,31 @@ $totalBayar =
         </div>
 
     </section>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
 
+            const profileBtn = document.getElementById('userProfileBtn');
+            const dropdown = document.getElementById('userDropdown');
+
+            if (profileBtn && dropdown) {
+
+                profileBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+
+                    dropdown.classList.toggle('active');
+                });
+
+                document.addEventListener('click', function() {
+                    dropdown.classList.remove('active');
+                });
+
+                dropdown.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                });
+            }
+
+        });
+    </script>
     <!-- =====================================================
      JAVASCRIPT
 ===================================================== -->
