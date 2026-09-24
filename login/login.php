@@ -1451,15 +1451,7 @@ if (isset($successMessages[$success])) {
         }
 
 
-        /*
-        |--------------------------------------------------------------------------
-        | Google Login
-        |--------------------------------------------------------------------------
-        |
-        | Untuk sekarang Google Login belum diaktifkan.
-        | Nantinya bisa dihubungkan dengan Google OAuth.
-        |
-        */
+
 
         function googleLogin() {
 

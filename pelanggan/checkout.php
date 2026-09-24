@@ -1,16 +1,5 @@
 <?php
 
-/* =========================================================
-   CHECKOUT - TOKU COFFEE
-   COD -> LANGSUNG PESANAN SELESAI
-   TRANSFER / QRIS / E-WALLET -> PEMBAYARAN.PHP
-
-   PROMO:
-   TOKUBARU   -> Diskon 20% max Rp15.000, min Rp50.000
-   TOKUHEMAT  -> Potongan Rp10.000, min Rp75.000
-   TOKUWEEKEND -> Diskon 15% max Rp20.000, min Rp100.000
-========================================================= */
-
 require_once "../config/koneksi.php";
 require_once "../config/session.php";
 

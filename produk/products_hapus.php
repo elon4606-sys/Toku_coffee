@@ -155,15 +155,7 @@ try {
     $stmt->close();
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | HAPUS DETAIL PESANAN
-    |--------------------------------------------------------------------------
-    |
-    | Jika produk pernah masuk pesanan, data detail pesanan
-    | juga perlu dihapus agar tidak menyebabkan foreign key error.
-    |
-    */
+
 
     $stmt = $conn->prepare("
         DELETE FROM detail_pesanan
@@ -236,29 +228,11 @@ try {
     $conn->commit();
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | HAPUS FILE GAMBAR
-    |--------------------------------------------------------------------------
-    |
-    | Database menyimpan:
-    | upload/nama-file.jpg
-    |
-    | Karena file ini berada di folder products/,
-    | maka path fisiknya:
-    |
-    | products/upload/nama-file.jpg
-    |
-    */
-
     if (!empty($produk['gambar'])) {
 
         $gambar = trim($produk['gambar']);
 
-        /*
-        | Hanya hapus file yang berada di folder upload
-        | agar tidak salah menghapus file lain.
-        */
+
 
         if (
             strpos($gambar, 'upload/') === 0 &&

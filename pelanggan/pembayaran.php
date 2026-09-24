@@ -1,15 +1,5 @@
 <?php
 
-/* =====================================================
-   PEMBAYARAN - TOKU COFFEE
-
-   TRANSFER BANK / QRIS / E-WALLET
-   Setelah konfirmasi:
-   pembayaran.php
-          ↓
-   pesanan-selesai.php
-===================================================== */
-
 require_once "../config/koneksi.php";
 require_once "../config/session.php";
 

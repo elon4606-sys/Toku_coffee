@@ -5,11 +5,6 @@ require_once __DIR__ . '/../config/session.php';
 
 requireRole(['admin', 'staff']);
 
-/*
-    Data keuangan utama berasal dari tabel
-    pesanan dan pembayaran.
-*/
-
 $action = $_GET['action'] ?? '';
 
 if ($action === 'summary') {

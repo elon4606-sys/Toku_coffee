@@ -149,18 +149,14 @@ if (!function_exists('isNotificationEnabled')) {
         ];
 
 
-        /*
-        | Notifikasi sistem selalu aktif
-        */
+        
 
         if ($type === 'system') {
             return true;
         }
 
 
-        /*
-        | Type lain default aktif
-        */
+
 
         if (!isset($settingMap[$type])) {
             return true;
@@ -170,9 +166,7 @@ if (!function_exists('isNotificationEnabled')) {
         $settingKey = $settingMap[$type];
 
 
-        /*
-        | Cek apakah tabel settings tersedia
-        */
+
 
         $stmt = $conn->prepare("
             SELECT setting_value
@@ -181,11 +175,6 @@ if (!function_exists('isNotificationEnabled')) {
             LIMIT 1
         ");
 
-
-        /*
-        | Kalau tabel settings belum tersedia,
-        | notifikasi tetap dianggap aktif
-        */
 
         if (!$stmt) {
             return true;
