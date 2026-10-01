@@ -2800,7 +2800,7 @@ if (
                                 Total Pembayaran
                             </span>
 
-                            <strong>
+                            <strong id="summaryTotal">
 
                                 <?= rupiah($totalBayar) ?>
 
@@ -3099,6 +3099,10 @@ if (
            KONFIRMASI PESANAN
         ===================================================== */
 
+        function formatRupiah(angka) {
+            return 'Rp ' + Number(angka).toLocaleString('id-ID');
+        }
+
         function toggleOrderType() {
             const selected = document.querySelector('input[name="tipe_pesanan"]:checked')?.value || 'Delivery';
             const deliveryFields = document.getElementById('deliveryFields');
@@ -3108,6 +3112,16 @@ if (
             const title = document.getElementById('shippingTitle');
             const text = document.getElementById('shippingText');
             const summaryOngkir = document.getElementById('summaryOngkir');
+            const summaryTotal = document.getElementById('summaryTotal');
+
+            // Nilai dari PHP agar total di layar mengikuti subtotal + promo yang sedang aktif.
+            const subtotal = <?= json_encode((float)$subtotal) ?>;
+            const diskonPromo = <?= json_encode((float)$diskonPromo) ?>;
+            const ongkirDelivery = 10000;
+
+            const subtotalSetelahPromo = Math.max(0, subtotal - diskonPromo);
+            const ongkirSekarang = selected === 'Take Away' ? 0 : ongkirDelivery;
+            const totalSekarang = subtotalSetelahPromo + ongkirSekarang;
 
             document.querySelectorAll('.order-type-option').forEach(el => el.classList.remove('selected'));
             document.querySelector('input[name="tipe_pesanan"]:checked')?.closest('.order-type-option')?.classList.add('selected');
@@ -3127,7 +3141,11 @@ if (
                 alamat.required = true;
                 title.textContent = 'Delivery - Ongkir Rp 10.000';
                 text.textContent = 'Pesanan akan diantar ke alamat yang kamu masukkan.';
-                if (summaryOngkir) summaryOngkir.textContent = 'Rp 10.000';
+                if (summaryOngkir) summaryOngkir.textContent = formatRupiah(ongkirDelivery);
+            }
+
+            if (summaryTotal) {
+                summaryTotal.textContent = formatRupiah(totalSekarang);
             }
         }
 

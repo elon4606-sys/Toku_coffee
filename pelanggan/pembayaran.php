@@ -11,41 +11,32 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-
-/* =====================================================
+/* =========================================================
    CEK LOGIN
-===================================================== */
+========================================================= */
 
 if (!isset($_SESSION['user_id'])) {
-
-    header(
-        "Location: ../login/login.php"
-    );
-
+    header("Location: ../login/login.php");
     exit;
 }
 
+$userId = (int) $_SESSION['user_id'];
+$role   = $_SESSION['role'] ?? '';
 
-if (($_SESSION['role'] ?? '') !== 'customer') {
-
-    header(
-        "Location: ../login/login.php?error=akses_ditolak"
-    );
-
+if ($role !== 'customer') {
+    header("Location: ../login/login.php?error=akses_ditolak");
     exit;
 }
 
-
-/* =====================================================
+/* =========================================================
    HELPER
-===================================================== */
+========================================================= */
 
 if (!function_exists('rupiah')) {
-
     function rupiah($angka)
     {
         return 'Rp ' . number_format(
-            (float)$angka,
+            (float) $angka,
             0,
             ',',
             '.'
@@ -53,136 +44,171 @@ if (!function_exists('rupiah')) {
     }
 }
 
-
 if (!function_exists('e')) {
-
-    function e($text)
+    function e($value)
     {
         return htmlspecialchars(
-            (string)$text,
+            (string) $value,
             ENT_QUOTES,
             'UTF-8'
         );
     }
 }
 
-
-/* =====================================================
-   USER
-===================================================== */
-
-$userId =
-    (int)($_SESSION['user_id'] ?? 0);
-
-
-/* =====================================================
+/* =========================================================
    CEK SESSION CHECKOUT
-===================================================== */
+========================================================= */
 
 if (
     !isset($_SESSION['checkout']) ||
     !is_array($_SESSION['checkout'])
 ) {
-
-    header(
-        "Location: checkout.php?error=data_checkout_tidak_ditemukan"
-    );
-
+    header("Location: checkout.php");
     exit;
 }
 
+$checkout = $_SESSION['checkout'];
 
-$checkout =
-    $_SESSION['checkout'];
-
-
-/* =====================================================
+/* =========================================================
    DATA CHECKOUT
-===================================================== */
+========================================================= */
 
-$nama =
-    trim(
-        $checkout['nama'] ?? ''
-    );
+$nama = trim(
+    $checkout['nama'] ?? ''
+);
 
-$email =
-    trim(
-        $checkout['email'] ?? ''
-    );
+$email = trim(
+    $checkout['email'] ?? ''
+);
 
-$telepon =
-    trim(
-        $checkout['telepon'] ?? ''
-    );
+$telepon = trim(
+    $checkout['telepon'] ?? ''
+);
 
-$kota =
-    trim(
-        $checkout['kota'] ?? ''
-    );
+$kota = trim(
+    $checkout['kota'] ?? ''
+);
 
-$alamat =
-    trim(
-        $checkout['alamat'] ?? ''
-    );
+$alamat = trim(
+    $checkout['alamat'] ?? ''
+);
 
-$metodePembayaran =
-    trim(
-        $checkout['metode_pembayaran'] ?? ''
-    );
+/* =========================================================
+   TIPE PESANAN
+========================================================= */
 
-
-/* =====================================================
-   VALIDASI METODE PEMBAYARAN
-===================================================== */
-
-$metodeValid = [
-
-    'Transfer Bank',
-
-    'QRIS',
-
-    'E-Wallet'
-
-];
-
+$tipePesanan = trim(
+    $checkout['tipe_pesanan'] ?? 'Delivery'
+);
 
 if (
-    !in_array(
-        $metodePembayaran,
-        $metodeValid,
-        true
-    )
+    $tipePesanan !== 'Delivery' &&
+    $tipePesanan !== 'Take Away'
 ) {
-
-    header(
-        "Location: checkout.php?error=metode_pembayaran_tidak_valid"
-    );
-
-    exit;
+    $tipePesanan = 'Delivery';
 }
 
+/* =========================================================
+   METODE PEMBAYARAN
+========================================================= */
 
-/* =====================================================
-   CEK KERANJANG
-===================================================== */
+$metodePembayaran = trim(
+    $checkout['metode_pembayaran'] ?? 'QRIS'
+);
+
+/* =========================================================
+   PROMO
+========================================================= */
+
+$kodePromo = strtoupper(
+    trim(
+        $checkout['kode_promo'] ?? ''
+    )
+);
+
+$namaPromo = trim(
+    $checkout['nama_promo'] ?? ''
+);
+
+$diskonPromo = (float) (
+    $checkout['diskon_promo'] ?? 0
+);
+
+/* =========================================================
+   ONGKIR
+========================================================= */
+
+if ($tipePesanan === 'Delivery') {
+
+    $ongkir = (float) (
+        $checkout['ongkir'] ?? 10000
+    );
+
+    if ($ongkir <= 0) {
+        $ongkir = 10000;
+    }
+} else {
+
+    $ongkir = 0;
+}
+
+/* =========================================================
+   KERANJANG
+========================================================= */
 
 if (
     !isset($_SESSION['keranjang']) ||
     !is_array($_SESSION['keranjang']) ||
     empty($_SESSION['keranjang'])
 ) {
-
     header(
         "Location: keranjang.php?error=keranjang_kosong"
+    );
+    exit;
+}
+
+/* =========================================================
+   AMBIL PRODUK
+========================================================= */
+
+$idProdukList = [];
+
+foreach (
+    $_SESSION['keranjang'] as $item
+) {
+
+    $id = (int) (
+        $item['id'] ?? 0
+    );
+
+    $qty = (int) (
+        $item['qty'] ?? 0
+    );
+
+    if (
+        $id > 0 &&
+        $qty > 0
+    ) {
+        $idProdukList[] = $id;
+    }
+}
+
+$idProdukList = array_values(
+    array_unique($idProdukList)
+);
+
+if (empty($idProdukList)) {
+
+    header(
+        "Location: keranjang.php?error=produk_tidak_valid"
     );
 
     exit;
 }
 
-
-/* =====================================================
-   AMBIL PRODUK DARI KERANJANG
-===================================================== */
+/* =========================================================
+   QUERY PRODUK
+========================================================= */
 
 $produkCheckout = [];
 
@@ -190,222 +216,177 @@ $subtotal = 0;
 
 $totalItem = 0;
 
-$idProdukList = [];
+$placeholders = implode(
+    ',',
+    array_fill(
+        0,
+        count($idProdukList),
+        '?'
+    )
+);
 
-
-foreach (
-    $_SESSION['keranjang'] as $item
-) {
-
-    $id =
-        (int)($item['id'] ?? 0);
-
-    $qty =
-        (int)($item['qty'] ?? 0);
-
-    if (
-        $id > 0 &&
-        $qty > 0
-    ) {
-
-        $idProdukList[] =
-            $id;
-    }
-}
-
-
-/* =====================================================
-   HAPUS DUPLIKAT ID
-===================================================== */
-
-$idProdukList =
-    array_values(
-        array_unique(
-            $idProdukList
-        )
-    );
-
-
-if (empty($idProdukList)) {
-
-    header(
-        "Location: keranjang.php?error=keranjang_kosong"
-    );
-
-    exit;
-}
-
-
-/* =====================================================
-   QUERY PRODUK
-===================================================== */
-
-$placeholders =
-    implode(
-        ',',
-        array_fill(
-            0,
-            count($idProdukList),
-            '?'
-        )
-    );
-
-
-$types =
-    str_repeat(
-        'i',
-        count($idProdukList)
-    );
-
+$types = str_repeat(
+    'i',
+    count($idProdukList)
+);
 
 $sqlProduk = "
-
     SELECT
         p.id,
         p.nama_produk,
         p.harga,
         p.gambar,
+        p.deskripsi,
         p.status,
         k.nama_kategori
-
     FROM produk p
-
     LEFT JOIN kategori k
         ON k.id = p.kategori_id
-
     WHERE p.id IN ($placeholders)
-
-    AND p.status = 'aktif'
-
+      AND p.status = 'aktif'
 ";
 
-
-$stmtProduk =
-    $conn->prepare(
-        $sqlProduk
-    );
-
+$stmtProduk = $conn->prepare(
+    $sqlProduk
+);
 
 if (!$stmtProduk) {
-
-    die('Gagal mengambil produk: '
-        . e($conn->error));
+    die("Gagal mengambil produk: " .
+        e($conn->error));
 }
-
 
 $stmtProduk->bind_param(
     $types,
     ...$idProdukList
 );
 
-
 $stmtProduk->execute();
 
-
-$resultProduk =
-    $stmtProduk->get_result();
-
+$resultProduk = $stmtProduk->get_result();
 
 $dataProdukDB = [];
 
+if ($resultProduk) {
 
-while (
-    $row =
-    $resultProduk->fetch_assoc()
-) {
+    while (
+        $row = $resultProduk->fetch_assoc()
+    ) {
 
-    $dataProdukDB[(int)$row['id']] = $row;
+        $dataProdukDB[(int) $row['id']] = $row;
+    }
 }
-
 
 $stmtProduk->close();
 
-
-/* =====================================================
-   GABUNGKAN PRODUK
-===================================================== */
+/* =========================================================
+   GABUNG PRODUK DENGAN KERANJANG
+========================================================= */
 
 foreach (
-    $_SESSION['keranjang']
-    as $item
+    $_SESSION['keranjang'] as $item
 ) {
 
-    $id =
-        (int)($item['id'] ?? 0);
+    $id = (int) (
+        $item['id'] ?? 0
+    );
 
-    $qty =
-        (int)($item['qty'] ?? 0);
-
+    $qty = (int) (
+        $item['qty'] ?? 0
+    );
 
     if (
         $id <= 0 ||
         $qty <= 0 ||
         !isset($dataProdukDB[$id])
     ) {
-
         continue;
     }
 
+    $produk = $dataProdukDB[$id];
 
-    $produk =
-        $dataProdukDB[$id];
+    $harga = (float) (
+        $produk['harga'] ?? 0
+    );
 
+    $jumlah = $harga * $qty;
 
-    $harga =
-        (float)$produk['harga'];
-
-
-    $jumlah =
-        $harga * $qty;
-
-
-    /* =================================================
-   GAMBAR
-================================================= */
+    /* =====================================================
+       GAMBAR
+    ===================================================== */
 
     $gambar = trim(
         $produk['gambar'] ?? ''
     );
 
-    if (!empty($gambar)) {
+    if ($gambar !== '') {
 
         if (
-            strpos($gambar, 'http://') === 0 ||
-            strpos($gambar, 'https://') === 0
+            preg_match(
+                '/^https?:\/\//i',
+                $gambar
+            )
         ) {
-            // URL tetap digunakan
+
+            // URL
+
         } elseif (
-            strpos($gambar, '../upload/') === 0
+            strpos(
+                $gambar,
+                '../upload/'
+            ) === 0
         ) {
-            // Sudah menggunakan path upload
+
+            // Sudah benar
+
+        } elseif (
+            strpos(
+                $gambar,
+                'upload/'
+            ) === 0
+        ) {
+
+            $gambar =
+                '../' . $gambar;
         } else {
 
-            // Database hanya menyimpan nama file
             $gambar =
                 '../upload/' .
                 basename($gambar);
         }
-    }
-
-    if (empty($gambar)) {
+    } else {
 
         $gambar =
             '../upload/toku-americano.png';
     }
 
-
-    /* =================================================
+    /* =====================================================
        KATEGORI
-    ================================================= */
+    ===================================================== */
 
-    $kategori =
-        $produk['nama_kategori']
-        ?? 'Umum';
+    $kategoriDB = strtolower(
+        trim(
+            $produk['nama_kategori']
+                ?? ''
+        )
+    );
 
+    if ($kategoriDB === 'kopi') {
 
-    /* =================================================
-       DATA PRODUK
-    ================================================= */
+        $kategori = 'Kopi';
+    } elseif (
+        $kategoriDB === 'minuman' ||
+        $kategoriDB === 'non coffee' ||
+        $kategoriDB === 'non-kopi' ||
+        $kategoriDB === 'non kopi'
+    ) {
+
+        $kategori = 'Non-Kopi';
+    } else {
+
+        $kategori =
+            $produk['nama_kategori']
+            ?? 'Umum';
+    }
 
     $produkCheckout[] = [
 
@@ -429,366 +410,370 @@ foreach (
 
         'kategori' =>
         $kategori
-
     ];
 
+    $subtotal += $jumlah;
 
-    $subtotal +=
-        $jumlah;
-
-
-    $totalItem +=
-        $qty;
+    $totalItem += $qty;
 }
 
-
-/* =====================================================
-   CEK PRODUK
-===================================================== */
+/* =========================================================
+   VALIDASI PRODUK
+========================================================= */
 
 if (empty($produkCheckout)) {
 
+    $_SESSION['keranjang'] = [];
+
     header(
-        "Location: keranjang.php?error=produk_tidak_ditemukan"
+        "Location: keranjang.php?error=produk_tidak_valid"
     );
 
     exit;
 }
 
+/* =========================================================
+   BATASI DISKON
+========================================================= */
 
-/* =====================================================
+$diskonPromo = min(
+    max(
+        0,
+        $diskonPromo
+    ),
+    $subtotal
+);
+
+/* =========================================================
    TOTAL
-===================================================== */
+========================================================= */
 
-$ongkir = 0;
+$totalSetelahDiskon =
+    max(
+        0,
+        $subtotal - $diskonPromo
+    );
 
 $totalBayar =
-    $subtotal + $ongkir;
+    $totalSetelahDiskon + $ongkir;
 
+/* =========================================================
+   INVOICE
+========================================================= */
 
-/* =====================================================
+$invoice = trim(
+    $checkout['invoice'] ?? ''
+);
+
+if ($invoice === '') {
+
+    $invoice =
+        'TOKU-' .
+        date('YmdHis') .
+        '-' .
+        strtoupper(
+            substr(
+                bin2hex(
+                    random_bytes(3)
+                ),
+                0,
+                6
+            )
+        );
+}
+
+/* =========================================================
    ERROR
-===================================================== */
+========================================================= */
 
 $errorPembayaran = '';
 
-
-/* =====================================================
-   PROSES KONFIRMASI PEMBAYARAN
-===================================================== */
+/* =========================================================
+   PROSES KONFIRMASI
+========================================================= */
 
 if (
     $_SERVER['REQUEST_METHOD'] === 'POST' &&
-    ($_POST['action'] ?? '') ===
-    'konfirmasi_pembayaran'
+    (
+        $_POST['action'] ?? ''
+    ) === 'konfirmasi_pembayaran'
 ) {
 
-    try {
-
-        /* =============================================
-           PASTIKAN METODE MASIH VALID
-        ============================================= */
-
-        if (
-            !in_array(
-                $metodePembayaran,
-                $metodeValid,
-                true
-            )
-        ) {
-
-            throw new Exception(
-                'Metode pembayaran tidak valid.'
-            );
-        }
-
-
-        /* =============================================
-           GENERATE INVOICE
-        ============================================= */
-
-        $invoice =
-            'TOKU-' .
-            date('YmdHis') .
-            '-' .
-            strtoupper(
-                substr(
-                    bin2hex(
-                        random_bytes(3)
-                    ),
-                    0,
-                    6
-                )
-            );
-
-
-        /* =============================================
-           MULAI TRANSAKSI
-        ============================================= */
-
-        $conn->begin_transaction();
-
-
-        /* =============================================
-           INSERT PESANAN
-        ============================================= */
-
-        $sqlPesanan = "
-
-            INSERT INTO pesanan
-            (
-                user_id,
-                invoice,
-                total,
-                metode_pembayaran,
-                status
-            )
-
-            VALUES
-            (
-                ?,
-                ?,
-                ?,
-                ?,
-                'Menunggu'
-            )
-
-        ";
-
-
-        $stmtPesanan =
-            $conn->prepare(
-                $sqlPesanan
-            );
-
-
-        if (!$stmtPesanan) {
-
-            throw new Exception(
-                'Gagal menyiapkan pesanan: '
-                    . $conn->error
-            );
-        }
-
-
-        $stmtPesanan->bind_param(
-            "isds",
-            $userId,
-            $invoice,
-            $totalBayar,
-            $metodePembayaran
+    $metodePembayaran =
+        trim(
+            $_POST['metode_pembayaran']
+                ?? $metodePembayaran
         );
 
+    $metodeValid = [
+        'QRIS',
+        'Transfer Bank',
+        'E-Wallet'
+    ];
 
-        if (
-            !$stmtPesanan->execute()
-        ) {
-
-            throw new Exception(
-                'Gagal menyimpan pesanan: '
-                    . $stmtPesanan->error
-            );
-        }
-
-
-        /* =============================================
-           AMBIL ID PESANAN
-        ============================================= */
-
-        $pesananId =
-            $conn->insert_id;
-
-
-        $stmtPesanan->close();
-
-
-        /* =============================================
-           INSERT DETAIL PESANAN
-        ============================================= */
-
-        $sqlDetail = "
-
-            INSERT INTO detail_pesanan
-            (
-                pesanan_id,
-                produk_id,
-                jumlah,
-                harga
-            )
-
-            VALUES
-            (
-                ?,
-                ?,
-                ?,
-                ?
-            )
-
-        ";
-
-
-        $stmtDetail =
-            $conn->prepare(
-                $sqlDetail
-            );
-
-
-        if (!$stmtDetail) {
-
-            throw new Exception(
-                'Gagal menyiapkan detail pesanan: '
-                    . $conn->error
-            );
-        }
-
-
-        foreach (
-            $produkCheckout
-            as $produk
-        ) {
-
-            $produkId =
-                (int)$produk['id'];
-
-            $jumlahProduk =
-                (int)$produk['qty'];
-
-            $hargaProduk =
-                (float)$produk['harga'];
-
-
-            $stmtDetail->bind_param(
-                "iiid",
-                $pesananId,
-                $produkId,
-                $jumlahProduk,
-                $hargaProduk
-            );
-
-
-            if (
-                !$stmtDetail->execute()
-            ) {
-
-                throw new Exception(
-                    'Gagal menyimpan detail pesanan: '
-                        . $stmtDetail->error
-                );
-            }
-        }
-
-
-        $stmtDetail->close();
-
-
-        /* =============================================
-           COMMIT TRANSAKSI
-        ============================================= */
-
-        $conn->commit();
-
-
-        /* =============================================
-           SIMPAN DATA PESANAN TERAKHIR
-        ============================================= */
-
-        $_SESSION['pesanan_terakhir'] = [
-
-            'pesanan_id' =>
-            $pesananId,
-
-            'invoice' =>
-            $invoice,
-
-            'nama' =>
-            $nama,
-
-            'email' =>
-            $email,
-
-            'telepon' =>
-            $telepon,
-
-            'kota' =>
-            $kota,
-
-            'alamat' =>
-            $alamat,
-
-            'metode_pembayaran' =>
+    if (
+        !in_array(
             $metodePembayaran,
+            $metodeValid,
+            true
+        )
+    ) {
 
-            'total' =>
-            $totalBayar,
-
-            'status' =>
-            'Menunggu',
-
-            'tanggal' =>
-            date('Y-m-d H:i:s')
-
-        ];
-
-
-        /* =============================================
-           KOSONGKAN KERANJANG
-        ============================================= */
-
-        $_SESSION['keranjang'] = [];
-
-
-        /* =============================================
-           HAPUS SESSION CHECKOUT
-        ============================================= */
-
-        unset(
-            $_SESSION['checkout']
-        );
-
-
-        /* =============================================
-           LANGSUNG KE PESANAN SELESAI
-        ============================================= */
-
-        header(
-            "Location: pesanan-selesai.php"
-        );
-
-        exit;
-    } catch (Throwable $e) {
-
-        /* =============================================
-           ROLLBACK JIKA GAGAL
-        ============================================= */
+        $errorPembayaran =
+            'Silakan pilih metode pembayaran.';
+    } else {
 
         try {
 
+            /* =============================================
+               TRANSAKSI
+            ============================================= */
+
+            $conn->begin_transaction();
+
+            /* =============================================
+               INSERT PESANAN
+            ============================================= */
+
+            $sqlPesanan = "
+                INSERT INTO pesanan
+                (
+                    user_id,
+                    invoice,
+                    total,
+                    metode_pembayaran,
+                    tipe_pesanan,
+                    kota,
+                    alamat_pengiriman,
+                    ongkir,
+                    status
+                )
+                VALUES
+                (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    'Menunggu'
+                )
+            ";
+
+            $stmtPesanan =
+                $conn->prepare(
+                    $sqlPesanan
+                );
+
+            if (!$stmtPesanan) {
+
+                throw new Exception(
+                    'Gagal menyiapkan pesanan: ' .
+                        $conn->error
+                );
+            }
+
+            $stmtPesanan->bind_param(
+                "isdssssd",
+                $userId,
+                $invoice,
+                $totalBayar,
+                $metodePembayaran,
+                $tipePesanan,
+                $kota,
+                $alamat,
+                $ongkir
+            );
+
+            if (
+                !$stmtPesanan->execute()
+            ) {
+
+                throw new Exception(
+                    'Gagal menyimpan pesanan: ' .
+                        $stmtPesanan->error
+                );
+            }
+
+            $pesananId =
+                (int) $conn->insert_id;
+
+            $stmtPesanan->close();
+
+            /* =============================================
+               DETAIL PESANAN
+            ============================================= */
+
+            $sqlDetail = "
+                INSERT INTO detail_pesanan
+                (
+                    pesanan_id,
+                    produk_id,
+                    jumlah,
+                    harga
+                )
+                VALUES
+                (
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+            ";
+
+            $stmtDetail =
+                $conn->prepare(
+                    $sqlDetail
+                );
+
+            if (!$stmtDetail) {
+
+                throw new Exception(
+                    'Gagal menyiapkan detail pesanan: ' .
+                        $conn->error
+                );
+            }
+
+            foreach (
+                $produkCheckout as $produk
+            ) {
+
+                $produkId =
+                    (int) $produk['id'];
+
+                $jumlahProduk =
+                    (int) $produk['qty'];
+
+                $hargaProduk =
+                    (float) $produk['harga'];
+
+                $stmtDetail->bind_param(
+                    "iiid",
+                    $pesananId,
+                    $produkId,
+                    $jumlahProduk,
+                    $hargaProduk
+                );
+
+                if (
+                    !$stmtDetail->execute()
+                ) {
+
+                    throw new Exception(
+                        'Gagal menyimpan detail pesanan: ' .
+                            $stmtDetail->error
+                    );
+                }
+            }
+
+            $stmtDetail->close();
+
+            /* =============================================
+               COMMIT
+            ============================================= */
+
+            $conn->commit();
+
+            /* =============================================
+               SIMPAN PESANAN TERAKHIR
+            ============================================= */
+
+            $_SESSION['pesanan_terakhir'] = [
+
+                'pesanan_id' =>
+                $pesananId,
+
+                'invoice' =>
+                $invoice,
+
+                'nama' =>
+                $nama,
+
+                'email' =>
+                $email,
+
+                'telepon' =>
+                $telepon,
+
+                'kota' =>
+                $kota,
+
+                'alamat' =>
+                $alamat,
+
+                'tipe_pesanan' =>
+                $tipePesanan,
+
+                'ongkir' =>
+                $ongkir,
+
+                'metode_pembayaran' =>
+                $metodePembayaran,
+
+                'subtotal' =>
+                $subtotal,
+
+                'kode_promo' =>
+                $kodePromo,
+
+                'nama_promo' =>
+                $namaPromo,
+
+                'diskon_promo' =>
+                $diskonPromo,
+
+                'total' =>
+                $totalBayar,
+
+                'tanggal' =>
+                date('Y-m-d H:i:s')
+            ];
+
+            /* =============================================
+               KOSONGKAN CART
+            ============================================= */
+
+            $_SESSION['keranjang'] = [];
+
+            /* =============================================
+               HAPUS CHECKOUT
+            ============================================= */
+
+            unset(
+                $_SESSION['checkout']
+            );
+
+            unset(
+                $_SESSION['promo_code'],
+                $_SESSION['promo_name'],
+                $_SESSION['promo_discount']
+            );
+
+            /* =============================================
+               KE DETAIL PESANAN
+            ============================================= */
+
+            header(
+                "Location: detail-pesanan.php?id=" .
+                    $pesananId
+            );
+
+            exit;
+        } catch (Throwable $e) {
+
             $conn->rollback();
-        } catch (Throwable $rollbackError) {
 
-            // Abaikan error rollback
+            $errorPembayaran =
+                $e->getMessage();
         }
-
-
-        /* =============================================
-           LOG ERROR
-        ============================================= */
-
-        error_log(
-            'TOKU PEMBAYARAN ERROR: '
-                . $e->getMessage()
-        );
-
-
-        $errorPembayaran =
-            'Pembayaran gagal diproses. Silakan coba kembali.';
     }
 }
 
 ?>
 
 <!DOCTYPE html>
-
 <html lang="id">
 
 <head>
@@ -803,7 +788,6 @@ if (
         Pembayaran - Toku Coffee
     </title>
 
-
     <link
         rel="preconnect"
         href="https://fonts.googleapis.com">
@@ -813,21 +797,13 @@ if (
         href="https://fonts.gstatic.com"
         crossorigin>
 
-
     <link
-        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
         rel="stylesheet">
-
 
     <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
-
-    <link
-        rel="stylesheet"
-        href="../css/style.css">
-
 
     <style>
         * {
@@ -835,662 +811,965 @@ if (
             font-family: 'Poppins', sans-serif;
         }
 
-
         body {
-            background: #faf9f5;
-            color: #443;
+            margin: 0;
+            background: #f5f5f5;
+            color: #333;
         }
 
+        /* =========================================================
+   PAGE
+========================================================= */
 
         .payment-page {
-            padding: 12rem 7% 7rem;
+            min-height: 100vh;
+            padding: 7rem 2rem 4rem;
         }
-
 
         .payment-container {
-            max-width: 100rem;
-            margin: auto;
-
-            display: grid;
-
-            grid-template-columns:
-                1.2fr .8fr;
-
-            gap: 2rem;
+            width: 100%;
+            max-width: 1050px;
+            margin: 0 auto;
         }
 
+        /* =========================================================
+   GRID
+========================================================= */
+
+        .payment-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.35fr) minmax(320px, .8fr);
+            gap: 16px;
+            align-items: start;
+        }
+
+        /* =========================================================
+   CARD
+========================================================= */
 
         .payment-card {
             background: #fff;
-
-            border-radius: 1.8rem;
-
-            padding: 2.5rem;
-
-            border: 1px solid #e8e3dc;
-
-            box-shadow:
-                0 1.5rem 3rem rgba(68, 51, 51, .06);
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .04);
         }
 
-
-        .payment-card h1,
         .payment-card h2 {
-            color: #2d211b;
-            margin-bottom: 1.5rem;
-        }
-
-
-        .payment-method {
-            background: #f8f4ed;
-
-            border-radius: 1.2rem;
-
-            padding: 2rem;
-
-            margin-bottom: 2rem;
-        }
-
-
-        .payment-method i {
-            color: #443;
-
-            font-size: 2.5rem;
-
-            margin-bottom: 1rem;
-        }
-
-
-        .payment-method h3 {
-            font-size: 1.8rem;
-
-            margin-bottom: .7rem;
-        }
-
-
-        .payment-method p {
-            color: #777;
-
-            font-size: 1.2rem;
-
-            line-height: 1.7;
-        }
-
-
-        .account-number {
-            background: #fff;
-
-            border: 1px dashed #cdbda8;
-
-            border-radius: 1rem;
-
-            padding: 1.5rem;
-
-            margin-top: 1.5rem;
-        }
-
-
-        .account-number strong {
-            display: block;
-
-            font-size: 1.8rem;
-
-            color: #443;
-
-            margin-top: .4rem;
-        }
-
-
-        .account-number span {
-            color: #777;
-        }
-
-
-        .payment-note {
-            padding: 1.4rem;
-
-            background: #fff7e8;
-
-            border: 1px solid #ead7ae;
-
-            border-radius: 1rem;
-
-            color: #765d2b;
-
-            font-size: 1.15rem;
-
-            line-height: 1.7;
-
-            margin-bottom: 2rem;
-        }
-
-
-        .btn-payment {
-            width: 100%;
-
-            border: none;
-
-            background: #443;
-
-            color: #fff;
-
-            padding: 1.4rem;
-
-            border-radius: 1rem;
-
-            cursor: pointer;
-
-            font-size: 1.3rem;
-
+            margin: 0 0 18px;
+            color: #222;
+            font-size: 18px;
             font-weight: 600;
+        }
 
+        .payment-card h2 i {
+            margin-right: 7px;
+            font-size: 16px;
+        }
+
+        /* =========================================================
+   QRIS
+========================================================= */
+
+        .qris-box {
+            background: #faf8f4;
+            border: 1px solid #eee7dd;
+            border-radius: 8px;
+            padding: 18px;
+        }
+
+        .qris-icon {
+            font-size: 23px;
+            color: #444638;
+            margin-bottom: 8px;
+        }
+
+        .qris-box h3 {
+            margin: 0 0 5px;
+            font-size: 17px;
+            font-weight: 600;
+            color: #292929;
+        }
+
+        .qris-box p {
+            margin: 0;
+            color: #666;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        /* =========================================================
+   QRIS CODE
+========================================================= */
+
+        .qris-code {
+            margin-top: 15px;
+            background: #fff;
+            border: 1px dashed #d8c7ad;
+            border-radius: 8px;
+            padding: 17px;
+            min-height: 90px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .qris-code h4 {
+            margin: 0 0 4px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .qris-code span {
+            color: #777;
+            font-size: 11px;
+        }
+
+        .qris-image {
+            max-width: 150px;
+            width: 100%;
+            margin: 12px auto 2px;
+            display: block;
+        }
+
+        /* =========================================================
+   INFO
+========================================================= */
+
+        .payment-info {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 14px;
+            padding: 12px 14px;
+            background: #fffaf0;
+            border: 1px solid #f0dfb7;
+            border-radius: 7px;
+            color: #755d2b;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .payment-info i {
+            margin-top: 2px;
+            font-size: 12px;
+        }
+
+        /* =========================================================
+   BUTTON
+========================================================= */
+
+        .btn-confirm {
+            width: 100%;
+            margin-top: 15px;
+            padding: 12px 15px;
+            border: none;
+            border-radius: 7px;
+            background: #444638;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
             transition: .2s ease;
         }
 
-
-        .btn-payment:hover {
-            background: #2f2424;
-
-            transform: translateY(-2px);
+        .btn-confirm:hover {
+            background: #303128;
         }
 
+        .btn-back {
+            display: block;
+            margin-top: 13px;
+            color: #555;
+            text-decoration: none;
+            font-size: 12px;
+        }
 
-        .summary-row {
+        .btn-back:hover {
+            color: #222;
+        }
+
+        /* =========================================================
+   ORDER ITEMS
+========================================================= */
+
+        .order-items {
+            margin-bottom: 15px;
+        }
+
+        .order-item {
             display: flex;
-
+            align-items: center;
             justify-content: space-between;
-
-            gap: 1rem;
-
-            padding: 1rem 0;
-
-            border-bottom: 1px solid #eee;
-
-            font-size: 1.2rem;
+            gap: 12px;
+            padding: 11px 0;
+            border-bottom: 1px solid #eeeeee;
         }
 
+        .order-item:first-child {
+            padding-top: 0;
+        }
 
-        .summary-row strong {
+        .order-item-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .order-item-image {
+            width: 46px;
+            height: 46px;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #f3f3f3;
+            flex-shrink: 0;
+        }
+
+        .order-item-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .order-item-info {
+            min-width: 0;
+        }
+
+        .order-item-info strong {
+            display: block;
+            color: #333;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .order-item-info span {
+            display: block;
+            margin-top: 2px;
+            color: #999;
+            font-size: 10px;
+        }
+
+        .order-item-price {
+            color: #333;
+            font-size: 12px;
+            font-weight: 600;
             white-space: nowrap;
         }
 
+        /* =========================================================
+   DETAIL
+========================================================= */
 
-        .summary-total {
+        .detail-section {
+            margin-top: 15px;
+            padding-top: 14px;
+            border-top: 1px solid #eeeeee;
+        }
+
+        .detail-section-title {
+            margin-bottom: 9px;
+            color: #333;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .detail-section-title i {
+            margin-right: 5px;
+        }
+
+        .detail-row {
             display: flex;
-
             justify-content: space-between;
+            align-items: flex-start;
+            gap: 15px;
+            padding: 5px 0;
+            font-size: 11px;
+        }
 
-            padding-top: 1.5rem;
+        .detail-row span:first-child {
+            color: #999;
+            flex-shrink: 0;
+        }
 
-            margin-top: 1rem;
+        .detail-row span:last-child {
+            color: #444;
+            font-weight: 500;
+            text-align: right;
+            max-width: 65%;
+        }
 
+        /* =========================================================
+   SUMMARY
+========================================================= */
+
+        .summary {
+            margin-top: 15px;
+            padding-top: 12px;
             border-top: 1px solid #ddd;
         }
 
-
-        .summary-total strong {
-            color: #443;
-
-            font-size: 1.8rem;
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 12px;
         }
 
+        .summary-row span:first-child {
+            color: #777;
+        }
 
-        .error {
-            background: #fff0f0;
+        .summary-row strong {
+            color: #333;
+            font-weight: 600;
+        }
 
-            border: 1px solid #e4b2b2;
+        .discount {
+            color: #527853 !important;
+        }
 
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 7px;
+            padding-top: 12px;
+            border-top: 1px solid #ddd;
+        }
+
+        .total-row span {
+            color: #333;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .total-row strong {
+            color: #333;
+            font-size: 19px;
+            font-weight: 700;
+        }
+
+        /* =========================================================
+   ERROR
+========================================================= */
+
+        .error-box {
+            margin-bottom: 14px;
+            padding: 10px 12px;
+            background: #fff1f1;
+            border: 1px solid #edc1c1;
+            border-radius: 7px;
             color: #a94442;
-
-            padding: 1.3rem;
-
-            border-radius: 1rem;
-
-            margin-bottom: 2rem;
+            font-size: 11px;
         }
 
+        /* =========================================================
+   DELIVERY BADGE
+========================================================= */
 
-        .back {
-            display: inline-block;
-
-            margin-top: 1.5rem;
-
-            color: #443;
-
-            text-decoration: none;
-
-            font-size: 1.2rem;
+        .delivery-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 8px;
+            border-radius: 5px;
+            background: #f3f1e8;
+            color: #555;
+            font-size: 10px;
         }
 
+        /* =========================================================
+   RESPONSIVE
+========================================================= */
 
-        .back:hover {
-            color: #6f4e37;
-        }
+        @media (max-width: 850px) {
 
+            .payment-page {
+                padding: 6rem 15px 3rem;
+            }
 
-        @media (max-width: 768px) {
-
-            .payment-container {
+            .payment-grid {
                 grid-template-columns: 1fr;
             }
 
+            .payment-card {
+                padding: 18px;
+            }
+        }
+
+        @media (max-width: 500px) {
 
             .payment-page {
-                padding:
-                    10rem 5% 5rem;
+                padding: 5rem 10px 2rem;
             }
 
+            .payment-card {
+                padding: 15px;
+                border-radius: 7px;
+            }
+
+            .payment-card h2 {
+                font-size: 16px;
+            }
+
+            .detail-row {
+                gap: 8px;
+            }
+
+            .detail-row span:last-child {
+                max-width: 60%;
+            }
+
+            .total-row strong {
+                font-size: 17px;
+            }
         }
     </style>
 
 </head>
 
-
 <body>
-
 
     <section class="payment-page">
 
-
         <div class="payment-container">
 
-
-            <!-- =================================================
-             PEMBAYARAN
-        ================================================== -->
-
-            <div class="payment-card">
-
-
-                <h1>
-
-                    <i class="fas fa-credit-card"></i>
-
-                    Pembayaran
-
-                </h1>
-
+            <div class="payment-grid">
 
                 <!-- =================================================
-                 TRANSFER BANK
+                 BAGIAN PEMBAYARAN
             ================================================== -->
 
-                <?php if (
-                    $metodePembayaran ===
-                    'Transfer Bank'
-                ): ?>
+                <div class="payment-card">
 
+                    <h2>
+                        <i class="fas fa-credit-card"></i>
+                        Pembayaran
+                    </h2>
 
-                    <div class="payment-method">
+                    <?php if ($errorPembayaran !== ''): ?>
 
-                        <i
-                            class="fas fa-building-columns">
-                        </i>
+                        <div class="error-box">
 
+                            <i class="fas fa-circle-exclamation"></i>
 
-                        <h3>
-                            Transfer Bank
-                        </h3>
-
-
-                        <p>
-
-                            Silakan transfer sesuai
-                            total pembayaran ke rekening
-                            Toku Coffee.
-
-                        </p>
-
-
-                        <div class="account-number">
-
-                            <small>
-                                Bank BCA
-                            </small>
-
-
-                            <strong>
-                                1234567890
-                            </strong>
-
-
-                            <span>
-                                a.n. Toku Coffee
-                            </span>
+                            <?= e($errorPembayaran) ?>
 
                         </div>
 
-                    </div>
+                    <?php endif; ?>
 
 
-                    <!-- =================================================
-                 QRIS
-            ================================================== -->
+                    <!-- QRIS -->
 
-                <?php elseif (
-                    $metodePembayaran ===
-                    'QRIS'
-                ): ?>
+                    <?php if ($metodePembayaran === 'QRIS'): ?>
 
+                        <div class="qris-box">
 
-                    <div class="payment-method">
+                            <div class="qris-icon">
 
-                        <i
-                            class="fas fa-qrcode">
-                        </i>
+                                <i class="fas fa-qrcode"></i>
 
+                            </div>
 
-                        <h3>
-                            QRIS
-                        </h3>
+                            <h3>
+                                QRIS
+                            </h3>
 
-
-                        <p>
-
-                            Silakan lakukan pembayaran
-                            menggunakan QRIS Toku Coffee.
-
-                        </p>
+                            <p>
+                                Silakan lakukan pembayaran
+                                menggunakan QRIS Toku Coffee.
+                            </p>
 
 
-                        <div class="account-number">
+                            <div class="qris-code">
 
-                            <strong>
-                                QRIS TOKU COFFEE
-                            </strong>
+                                <h4>
+                                    QRIS TOKU COFFEE
+                                </h4>
 
+                                <span>
+                                    Scan QRIS Toku Coffee
+                                    untuk melakukan pembayaran.
+                                </span>
 
-                            <span>
+                                <?php
+                                $qrisPath =
+                                    "../upload/qris-toku.png";
 
-                                Scan QRIS Toku Coffee
-                                untuk melakukan pembayaran.
+                                if (file_exists($qrisPath)):
+                                ?>
 
-                            </span>
+                                    <img
+                                        src="<?= e($qrisPath) ?>"
+                                        alt="QRIS Toku Coffee"
+                                        class="qris-image">
 
-                        </div>
+                                <?php endif; ?>
 
-                    </div>
-
-
-                    <!-- =================================================
-                 E-WALLET
-            ================================================== -->
-
-                <?php elseif (
-                    $metodePembayaran ===
-                    'E-Wallet'
-                ): ?>
-
-
-                    <div class="payment-method">
-
-                        <i
-                            class="fas fa-wallet">
-                        </i>
-
-
-                        <h3>
-                            E-Wallet
-                        </h3>
-
-
-                        <p>
-
-                            Silakan lakukan pembayaran
-                            menggunakan e-wallet yang tersedia.
-
-                        </p>
-
-
-                        <div class="account-number">
-
-                            <strong>
-                                0812-0000-0000
-                            </strong>
-
-
-                            <span>
-                                Toku Coffee
-                            </span>
+                            </div>
 
                         </div>
 
-                    </div>
+                    <?php endif; ?>
 
 
-                <?php endif; ?>
+                    <!-- TRANSFER -->
+
+                    <?php if ($metodePembayaran === 'Transfer Bank'): ?>
+
+                        <div class="qris-box">
+
+                            <div class="qris-icon">
+
+                                <i class="fas fa-building-columns"></i>
+
+                            </div>
+
+                            <h3>
+                                Transfer Bank
+                            </h3>
+
+                            <p>
+                                Silakan transfer sesuai total
+                                pembayaran pesanan.
+                            </p>
+
+                            <div class="qris-code">
+
+                                <h4>
+                                    Rekening Toku Coffee
+                                </h4>
+
+                                <span>
+                                    Bank BCA
+                                </span>
+
+                                <strong
+                                    style="
+                                    display:block;
+                                    font-size:1.5rem;
+                                    margin-top:.6rem;
+                                    color:#443;
+                                ">
+
+                                    1234567890
+
+                                </strong>
+
+                                <span>
+                                    a.n. Toku Coffee
+                                </span>
+
+                            </div>
+
+                        </div>
+
+                    <?php endif; ?>
 
 
-                <!-- =================================================
-                 ERROR
-            ================================================== -->
+                    <!-- E-WALLET -->
 
-                <?php if (
-                    $errorPembayaran !== ''
-                ): ?>
+                    <?php if ($metodePembayaran === 'E-Wallet'): ?>
 
-                    <div class="error">
+                        <div class="qris-box">
 
-                        <i
-                            class="fas fa-circle-exclamation">
-                        </i>
+                            <div class="qris-icon">
 
-                        <?= e(
-                            $errorPembayaran
-                        ) ?>
+                                <i class="fas fa-wallet"></i>
 
-                    </div>
+                            </div>
 
-                <?php endif; ?>
+                            <h3>
+                                E-Wallet
+                            </h3>
 
+                            <p>
+                                Silakan lakukan pembayaran
+                                menggunakan E-Wallet.
+                            </p>
 
-                <!-- =================================================
-                 CATATAN
-            ================================================== -->
+                            <div class="qris-code">
 
-                <div class="payment-note">
+                                <h4>
+                                    E-Wallet Toku Coffee
+                                </h4>
 
-                    <i
-                        class="fas fa-circle-info">
-                    </i>
+                                <span>
+                                    GoPay / OVO / DANA
+                                </span>
 
+                                <strong
+                                    style="
+                                    display:block;
+                                    font-size:1.5rem;
+                                    margin-top:.6rem;
+                                    color:#443;
+                                ">
 
-                    Setelah melakukan pembayaran,
-                    klik tombol
+                                    0812-3456-7890
 
-                    <strong>
-                        Konfirmasi Pembayaran
-                    </strong>
+                                </strong>
 
-                    untuk menyelesaikan pesanan.
+                            </div>
 
-                </div>
+                        </div>
 
-
-                <!-- =================================================
-                 FORM KONFIRMASI
-            ================================================== -->
-
-                <form
-                    method="POST"
-                    onsubmit="return konfirmasiPembayaran();">
+                    <?php endif; ?>
 
 
-                    <input
-                        type="hidden"
-                        name="action"
-                        value="konfirmasi_pembayaran">
+                    <!-- INFO -->
 
+                    <div class="payment-info">
 
-                    <button
-                        type="submit"
-                        class="btn-payment">
-
-                        <i
-                            class="fas fa-check-circle">
-                        </i>
-
-                        Konfirmasi Pembayaran
-
-                    </button>
-
-                </form>
-
-
-                <!-- =================================================
-                 KEMBALI
-            ================================================== -->
-
-                <a
-                    href="checkout.php"
-                    class="back">
-
-                    <i
-                        class="fas fa-arrow-left">
-                    </i>
-
-                    Kembali ke Checkout
-
-                </a>
-
-
-            </div>
-
-
-            <!-- =================================================
-             RINGKASAN PESANAN
-        ================================================== -->
-
-            <div class="payment-card">
-
-
-                <h2>
-                    Ringkasan Pesanan
-                </h2>
-
-
-                <?php foreach (
-                    $produkCheckout
-                    as $produk
-                ): ?>
-
-
-                    <div class="summary-row">
-
+                        <i class="fas fa-circle-info"></i>
 
                         <span>
 
-                            <?= e(
-                                $produk['nama_produk']
-                            ) ?>
-
-                            ×
-
-                            <?= (int)$produk['qty'] ?>
+                            Setelah melakukan pembayaran,
+                            klik tombol
+                            <strong>
+                                Konfirmasi Pembayaran
+                            </strong>
+                            untuk menyelesaikan pesanan.
 
                         </span>
-
-
-                        <strong>
-
-                            <?= rupiah(
-                                $produk['jumlah']
-                            ) ?>
-
-                        </strong>
-
 
                     </div>
 
 
-                <?php endforeach; ?>
+                    <!-- FORM -->
+
+                    <form
+                        method="POST"
+                        action="">
+
+                        <input
+                            type="hidden"
+                            name="action"
+                            value="konfirmasi_pembayaran">
+
+                        <input
+                            type="hidden"
+                            name="metode_pembayaran"
+                            value="<?= e($metodePembayaran) ?>">
+
+                        <button
+                            type="submit"
+                            class="btn-confirm">
+
+                            <i class="fas fa-circle-check"></i>
+
+                            Konfirmasi Pembayaran
+
+                        </button>
+
+                    </form>
 
 
-                <!-- SUBTOTAL -->
+                    <a
+                        href="checkout.php"
+                        class="btn-back">
 
-                <div class="summary-row">
+                        <i class="fas fa-arrow-left"></i>
 
-                    <span>
-                        Subtotal
-                    </span>
+                        Kembali Ke Checkout
 
-
-                    <strong>
-
-                        <?= rupiah(
-                            $subtotal
-                        ) ?>
-
-                    </strong>
-
-                </div>
-
-
-                <!-- ONGKIR -->
-
-                <div class="summary-row">
-
-                    <span>
-                        Ongkir
-                    </span>
-
-
-                    <strong
-                        style="color:#527853;">
-
-                        Gratis
-
-                    </strong>
-
-                </div>
-
-
-                <!-- TOTAL -->
-
-                <div class="summary-total">
-
-                    <span>
-                        Total
-                    </span>
-
-
-                    <strong>
-
-                        <?= rupiah(
-                            $totalBayar
-                        ) ?>
-
-                    </strong>
+                    </a>
 
                 </div>
 
+
+                <!-- =================================================
+                 RINCIAN PESANAN
+            ================================================== -->
+
+                <div class="payment-card">
+
+                    <h2>
+                        Ringkasan Pesanan
+                    </h2>
+
+
+                    <!-- PRODUK -->
+
+                    <div class="order-items">
+
+                        <?php foreach (
+                            $produkCheckout
+                            as $produk
+                        ): ?>
+
+                            <div class="order-item">
+
+                                <div class="order-item-left">
+
+                                    <div class="order-item-image">
+
+                                        <img
+                                            src="<?= e($produk['gambar']) ?>"
+                                            alt="<?= e($produk['nama_produk']) ?>">
+
+                                    </div>
+
+
+                                    <div class="order-item-info">
+
+                                        <strong>
+                                            <?= e(
+                                                $produk['nama_produk']
+                                            ) ?>
+                                            ×
+                                            <?= (int)$produk['qty'] ?>
+                                        </strong>
+
+                                        <span>
+                                            <?= rupiah(
+                                                $produk['harga']
+                                            ) ?>
+                                            / item
+                                        </span>
+
+                                    </div>
+
+                                </div>
+
+
+                                <div class="order-item-price">
+
+                                    <?= rupiah(
+                                        $produk['jumlah']
+                                    ) ?>
+
+                                </div>
+
+                            </div>
+
+                        <?php endforeach; ?>
+
+                    </div>
+
+
+                    <!-- =================================================
+                     DETAIL PESANAN
+                ================================================== -->
+
+                    <div class="detail-section">
+
+                        <div class="detail-section-title">
+
+                            <i class="fas fa-clipboard-list"></i>
+
+                            Rincian Pengiriman
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <span>
+                                Tipe Pesanan
+                            </span>
+
+                            <span>
+
+                                <?php if (
+                                    $tipePesanan === 'Delivery'
+                                ): ?>
+
+                                    <i class="fas fa-motorcycle"></i>
+                                    Delivery
+
+                                <?php else: ?>
+
+                                    <i class="fas fa-store"></i>
+                                    Take Away
+
+                                <?php endif; ?>
+
+                            </span>
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <span>
+                                Nama
+                            </span>
+
+                            <span>
+                                <?= e($nama) ?>
+                            </span>
+
+                        </div>
+
+
+                        <div class="detail-row">
+
+                            <span>
+                                Telepon
+                            </span>
+
+                            <span>
+                                <?= e($telepon) ?>
+                            </span>
+
+                        </div>
+
+
+                        <?php if ($tipePesanan === 'Delivery'): ?>
+
+                            <div class="detail-row">
+
+                                <span>
+                                    Kota
+                                </span>
+
+                                <span>
+                                    <?= e($kota) ?>
+                                </span>
+
+                            </div>
+
+
+                            <div class="detail-row">
+
+                                <span>
+                                    Alamat
+                                </span>
+
+                                <span>
+                                    <?= e($alamat) ?>
+                                </span>
+
+                            </div>
+
+                        <?php else: ?>
+
+                            <div class="detail-row">
+
+                                <span>
+                                    Lokasi Pickup
+                                </span>
+
+                                <span>
+                                    Toku Coffee
+                                </span>
+
+                            </div>
+
+                        <?php endif; ?>
+
+
+                        <div class="detail-row">
+
+                            <span>
+                                Pembayaran
+                            </span>
+
+                            <span>
+                                <?= e($metodePembayaran) ?>
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- =================================================
+                     SUMMARY
+                ================================================== -->
+
+                    <div class="summary">
+
+                        <div class="summary-row">
+
+                            <span>
+                                Subtotal
+                            </span>
+
+                            <strong>
+                                <?= rupiah($subtotal) ?>
+                            </strong>
+
+                        </div>
+
+
+                        <?php if ($diskonPromo > 0): ?>
+
+                            <div class="summary-row">
+
+                                <span>
+                                    Diskon
+                                </span>
+
+                                <strong class="discount">
+
+                                    - <?= rupiah(
+                                            $diskonPromo
+                                        ) ?>
+
+                                </strong>
+
+                            </div>
+
+                        <?php endif; ?>
+
+
+                        <div class="summary-row">
+
+                            <span>
+                                Ongkir
+                            </span>
+
+                            <strong
+                                class="<?= $ongkir > 0
+                                            ? ''
+                                            : 'discount' ?>">
+
+                                <?php if ($ongkir > 0): ?>
+
+                                    <?= rupiah($ongkir) ?>
+
+                                <?php else: ?>
+
+                                    Gratis
+
+                                <?php endif; ?>
+
+                            </strong>
+
+                        </div>
+
+
+                        <div class="total-row">
+
+                            <span>
+                                Total
+                            </span>
+
+                            <strong>
+                                <?= rupiah($totalBayar) ?>
+                            </strong>
+
+                        </div>
+
+                    </div>
+
+                </div>
 
             </div>
 
-
         </div>
 
-
     </section>
-
-
-    <script>
-        function konfirmasiPembayaran() {
-            const metode =
-                <?= json_encode(
-                    $metodePembayaran
-                ) ?>;
-
-
-            return confirm(
-                'Apakah pembayaran melalui ' +
-                metode +
-                ' sudah dilakukan?\\n\\n' +
-                'Setelah dikonfirmasi, pesanan akan langsung dibuat dan Anda akan diarahkan ke halaman Pesanan Selesai.'
-            );
-        }
-    </script>
-
 
 </body>
 

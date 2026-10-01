@@ -221,7 +221,31 @@ if (empty($pesanan)) {
 
     exit;
 }
+/* =========================================================
+   NOMOR TELEPON
+========================================================= */
 
+$nomorTelepon = trim(
+    $pesanan['phone'] ?? ''
+);
+
+if ($nomorTelepon === '') {
+    $nomorTelepon = trim(
+        $dataUser['phone'] ?? ''
+    );
+}
+
+if ($nomorTelepon === '') {
+    $nomorTelepon = trim(
+        $_SESSION['phone']
+            ?? $_SESSION['telepon']
+            ?? ''
+    );
+}
+
+if ($nomorTelepon === '') {
+    $nomorTelepon = '-';
+}
 /* =========================================================
    DATA DETAIL PESANAN
 ========================================================= */
@@ -1938,12 +1962,7 @@ $bisaDibatalkan =
                                 </small>
 
                                 <strong>
-
-                                    <?= e(
-                                        $pesanan['phone']
-                                            ?? '-'
-                                    ) ?>
-
+                                    <?= e($nomorTelepon) ?>
                                 </strong>
 
                             </div>
