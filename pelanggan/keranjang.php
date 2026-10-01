@@ -2760,18 +2760,13 @@ $totalBayar =
 
                             <i class="fas fa-truck-fast"></i>
 
-                            <span>
-
-                                Pesananmu siap diproses.
-                                Ongkir saat ini gratis.
-
-                            </span>
+                            <span>Pesananmu siap diproses.</span>
 
                         </div>
 
                         <!-- =================================================
                          INFO PROMO
-                    ================================================== -->
+                        ================================================== -->
 
                         <div class="promo-info">
 
