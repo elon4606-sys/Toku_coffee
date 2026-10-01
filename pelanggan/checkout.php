@@ -459,10 +459,25 @@ if (empty($produkCheckout)) {
 }
 
 /* =========================================================
-   ONGKIR
+   TAKE AWAY / DELIVERY
 ========================================================= */
 
-$ongkir = 0;
+$orderTypeCheckout = 'Delivery';
+$ongkir = 10000;
+
+if (isset($_POST['tipe_pesanan'])) {
+    $orderTypeCheckout = trim($_POST['tipe_pesanan']);
+}
+
+if ($orderTypeCheckout === 'Take Away') {
+    $ongkir = 0;
+} elseif ($orderTypeCheckout !== 'Delivery') {
+    $orderTypeCheckout = 'Delivery';
+    $ongkir = 10000;
+}
+
+$pickupLocation = 'Toku Coffee';
+$pickupAddress = 'Ambil langsung di outlet Toku Coffee';
 
 /* =========================================================
    PROMO / DISKON
@@ -725,6 +740,17 @@ if (
             $_POST['metode_pembayaran'] ?? ''
         );
 
+    $tipePesanan =
+        trim(
+            $_POST['tipe_pesanan'] ?? 'Delivery'
+        );
+
+    if (!in_array($tipePesanan, ['Take Away', 'Delivery'], true)) {
+        $tipePesanan = 'Delivery';
+    }
+
+    $ongkir = ($tipePesanan === 'Delivery') ? 10000 : 0;
+
     /* =====================================================
        TAMPILKAN KEMBALI DATA FORM
     ===================================================== */
@@ -747,6 +773,9 @@ if (
     $metodePembayaranCheckout =
         $metodePembayaran;
 
+    $orderTypeCheckout =
+        $tipePesanan;
+
     /* =====================================================
        VALIDASI
     ===================================================== */
@@ -754,19 +783,23 @@ if (
     if ($nama === '') {
 
         $errorCheckout =
-            'Nama penerima wajib diisi.';
+            'Nama pelanggan wajib diisi.';
     } elseif ($telepon === '') {
 
         $errorCheckout =
             'Nomor telepon wajib diisi.';
-    } elseif ($kota === '') {
+    } elseif (!in_array($tipePesanan, ['Take Away', 'Delivery'], true)) {
 
         $errorCheckout =
-            'Kota wajib diisi.';
-    } elseif ($alamat === '') {
+            'Silakan pilih tipe pesanan.';
+    } elseif ($tipePesanan === 'Delivery' && $kota === '') {
 
         $errorCheckout =
-            'Alamat lengkap wajib diisi.';
+            'Kota wajib diisi untuk Delivery.';
+    } elseif ($tipePesanan === 'Delivery' && $alamat === '') {
+
+        $errorCheckout =
+            'Alamat lengkap wajib diisi untuk Delivery.';
     } elseif (
         !in_array(
             $metodePembayaran,
@@ -830,6 +863,15 @@ if (
             'alamat' =>
             $alamat,
 
+            'tipe_pesanan' =>
+            $tipePesanan,
+
+            'ongkir' =>
+            $ongkir,
+
+            'pickup_location' =>
+            $pickupLocation,
+
             'metode_pembayaran' =>
             $metodePembayaran,
 
@@ -844,9 +886,6 @@ if (
 
             'diskon_promo' =>
             $diskonPromo,
-
-            'ongkir' =>
-            $ongkir,
 
             'total' =>
             $totalBayar,
@@ -881,10 +920,18 @@ if (
                         invoice,
                         total,
                         metode_pembayaran,
+                        tipe_pesanan,
+                        kota,
+                        alamat_pengiriman,
+                        ongkir,
                         status
                     )
                     VALUES
                     (
+                        ?,
+                        ?,
+                        ?,
+                        ?,
                         ?,
                         ?,
                         ?,
@@ -907,11 +954,15 @@ if (
                 }
 
                 $stmtPesanan->bind_param(
-                    "isds",
+                    "isdssssd",
                     $userId,
                     $invoice,
                     $totalBayar,
-                    $metodePembayaran
+                    $metodePembayaran,
+                    $tipePesanan,
+                    $kota,
+                    $alamat,
+                    $ongkir
                 );
 
                 if (
@@ -1030,6 +1081,12 @@ if (
 
                     'alamat' =>
                     $alamat,
+
+                    'tipe_pesanan' =>
+                    $tipePesanan,
+
+                    'ongkir' =>
+                    $ongkir,
 
                     'metode_pembayaran' =>
                     $metodePembayaran,
@@ -1962,6 +2019,143 @@ if (
                 flex-direction: column;
             }
         }
+
+        /* =====================================================
+           TAKE AWAY / DELIVERY
+        ===================================================== */
+        .order-type-title {
+            display: flex;
+            align-items: center;
+            gap: .8rem;
+            font-size: 1.45rem;
+            font-weight: 600;
+            margin: 1.5rem 0 1rem;
+        }
+
+        .order-type-title i {
+            color: var(--green);
+        }
+
+        .order-type-options {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .order-type-option {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 1.1rem;
+            padding: 1.5rem;
+            background: #faf9f5;
+            border: .2rem solid #e8e2d8;
+            border-radius: 1.5rem;
+            cursor: pointer;
+            transition: .2s;
+        }
+
+        .order-type-option:hover,
+        .order-type-option.selected {
+            border-color: var(--green);
+            background: #f5f8f1;
+        }
+
+        .order-type-option input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .order-type-icon {
+            width: 4.5rem;
+            height: 4.5rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            border: .15rem solid #ddd;
+            font-size: 1.8rem;
+        }
+
+        .order-type-option.selected .order-type-icon {
+            background: var(--green);
+            color: #fff;
+            border-color: var(--green);
+        }
+
+        .order-type-text {
+            display: flex;
+            flex-direction: column;
+            gap: .3rem;
+            flex: 1;
+        }
+
+        .order-type-text strong {
+            font-size: 1.45rem;
+        }
+
+        .order-type-text small {
+            font-size: 1.1rem;
+            color: #888;
+        }
+
+        .order-type-option b {
+            font-size: 1.15rem;
+            color: var(--green);
+            white-space: nowrap;
+        }
+
+        .pickup-info {
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            padding: 1.4rem;
+            margin-bottom: 1.5rem;
+            background: #f4f7ef;
+            border: .15rem solid #dce8d5;
+            border-radius: 1.2rem;
+        }
+
+        .pickup-info>i {
+            font-size: 2rem;
+            color: var(--green);
+        }
+
+        .pickup-info div {
+            display: flex;
+            flex-direction: column;
+            gap: .25rem;
+        }
+
+        .pickup-info strong {
+            font-size: 1.3rem;
+        }
+
+        .pickup-info span {
+            font-size: 1.1rem;
+            color: #777;
+        }
+
+        .delivery-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .7rem 1rem;
+            border-radius: 1rem;
+            background: #eef4f8;
+            color: var(--blue);
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        @media (max-width:700px) {
+            .order-type-options {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 
 </head>
@@ -2117,7 +2311,7 @@ if (
 
         <p>
 
-            Lengkapi data pengiriman dan pilih metode pembayaran.
+            Pilih Take Away atau Delivery, lengkapi data pelanggan, lalu pilih metode pembayaran.
 
         </p>
 
@@ -2198,159 +2392,102 @@ if (
 
                     <h2>
 
-                        <i class="fas fa-location-dot"></i>
+                        <i class="fas fa-bag-shopping"></i>
 
-                        Data Pengiriman
+                        Tipe Pesanan & Data Pelanggan
 
                     </h2>
 
                     <span class="item-badge">
-
-                        <?= (int)$totalItem ?>
-
-                        item
-
+                        <?= (int)$totalItem ?> item
                     </span>
 
                 </div>
 
-
                 <?php if ($errorCheckout !== ''): ?>
 
                     <div class="checkout-error">
-
                         <i class="fas fa-circle-exclamation"></i>
-
-                        <span>
-
-                            <?= e($errorCheckout) ?>
-
-                        </span>
-
+                        <span><?= e($errorCheckout) ?></span>
                     </div>
 
                 <?php endif; ?>
 
+                <form method="POST" action="checkout.php" onsubmit="return konfirmasiPesanan();">
 
-                <form
-                    method="POST"
-                    action="checkout.php"
-                    onsubmit="return konfirmasiPesanan();">
+                    <input type="hidden" name="action" value="buat_pesanan">
 
-                    <input
-                        type="hidden"
-                        name="action"
-                        value="buat_pesanan">
+                    <!-- TIPE PESANAN -->
+                    <div class="order-type-title">
+                        <i class="fas fa-store"></i>
+                        Pilih Cara Menerima Pesanan
+                    </div>
 
+                    <div class="order-type-options">
+
+                        <label class="order-type-option <?= $orderTypeCheckout === 'Take Away' ? 'selected' : '' ?>">
+                            <input type="radio" name="tipe_pesanan" value="Take Away" <?= $orderTypeCheckout === 'Take Away' ? 'checked' : '' ?> required onchange="toggleOrderType()">
+                            <span class="order-type-icon"><i class="fas fa-bag-shopping"></i></span>
+                            <span class="order-type-text">
+                                <strong>Take Away</strong>
+                                <small>Ambil langsung di Toku Coffee</small>
+                            </span>
+                            <b>Gratis</b>
+                        </label>
+
+                        <label class="order-type-option <?= $orderTypeCheckout === 'Delivery' ? 'selected' : '' ?>">
+                            <input type="radio" name="tipe_pesanan" value="Delivery" <?= $orderTypeCheckout === 'Delivery' ? 'checked' : '' ?> onchange="toggleOrderType()">
+                            <span class="order-type-icon"><i class="fas fa-truck-fast"></i></span>
+                            <span class="order-type-text">
+                                <strong>Delivery</strong>
+                                <small>Pesanan diantar ke alamat</small>
+                            </span>
+                            <b><?= rupiah(10000) ?></b>
+                        </label>
+
+                    </div>
+
+                    <!-- TAKE AWAY INFO -->
+                    <div id="takeAwayInfo" class="pickup-info" style="<?= $orderTypeCheckout === 'Take Away' ? '' : 'display:none;' ?>">
+                        <i class="fas fa-store"></i>
+                        <div>
+                            <strong>Pengambilan di Toku Coffee</strong>
+                            <span>Pesanan akan disiapkan untuk diambil langsung di outlet.</span>
+                        </div>
+                    </div>
 
                     <!-- NAMA -->
-
                     <div class="form-group">
-
-                        <label>
-
-                            <i class="fas fa-user"></i>
-
-                            Nama Penerima
-
-                        </label>
-
-                        <input
-                            type="text"
-                            name="nama"
-                            value="<?= e($namaCheckout) ?>"
-                            placeholder="Masukkan nama penerima"
-                            required>
-
+                        <label><i class="fas fa-user"></i> Nama Pelanggan</label>
+                        <input type="text" name="nama" value="<?= e($namaCheckout) ?>" placeholder="Masukkan nama pelanggan" required>
                     </div>
-
 
                     <!-- EMAIL + TELEPON -->
-
                     <div class="form-row">
+                        <div class="form-group">
+                            <label><i class="fas fa-envelope"></i> Email</label>
+                            <input type="email" name="email" value="<?= e($emailCheckout) ?>" placeholder="contoh@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-phone"></i> Nomor Telepon</label>
+                            <input type="text" name="telepon" value="<?= e($teleponCheckout) ?>" placeholder="08xxxxxxxxxx" required>
+                        </div>
+                    </div>
+
+                    <!-- DELIVERY DATA -->
+                    <div id="deliveryFields" style="<?= $orderTypeCheckout === 'Take Away' ? 'display:none;' : '' ?>">
 
                         <div class="form-group">
-
-                            <label>
-
-                                <i class="fas fa-envelope"></i>
-
-                                Email
-
-                            </label>
-
-                            <input
-                                type="email"
-                                name="email"
-                                value="<?= e($emailCheckout) ?>"
-                                placeholder="contoh@email.com">
-
+                            <label><i class="fas fa-city"></i> Kota</label>
+                            <input id="kota" type="text" name="kota" value="<?= e($kotaCheckout) ?>" placeholder="Contoh: Jayapura" <?= $orderTypeCheckout === 'Delivery' ? 'required' : '' ?>>
                         </div>
 
-
                         <div class="form-group">
-
-                            <label>
-
-                                <i class="fas fa-phone"></i>
-
-                                Nomor Telepon
-
-                            </label>
-
-                            <input
-                                type="text"
-                                name="telepon"
-                                value="<?= e($teleponCheckout) ?>"
-                                placeholder="08xxxxxxxxxx"
-                                required>
-
+                            <label><i class="fas fa-map-location-dot"></i> Alamat Lengkap</label>
+                            <textarea id="alamat" name="alamat" placeholder="Masukkan alamat lengkap pengiriman..." <?= $orderTypeCheckout === 'Delivery' ? 'required' : '' ?>><?= e($alamatCheckout) ?></textarea>
                         </div>
 
                     </div>
-
-
-                    <!-- KOTA -->
-
-                    <div class="form-group">
-
-                        <label>
-
-                            <i class="fas fa-city"></i>
-
-                            Kota
-
-                        </label>
-
-                        <input
-                            type="text"
-                            name="kota"
-                            value="<?= e($kotaCheckout) ?>"
-                            placeholder="Contoh: Jayapura"
-                            required>
-
-                    </div>
-
-
-                    <!-- ALAMAT -->
-
-                    <div class="form-group">
-
-                        <label>
-
-                            <i class="fas fa-map-location-dot"></i>
-
-                            Alamat Lengkap
-
-                        </label>
-
-                        <textarea
-                            name="alamat"
-                            placeholder="Masukkan alamat lengkap pengiriman..."
-                            required><?= e($alamatCheckout) ?></textarea>
-
-                    </div>
-
 
                     <!-- METODE PEMBAYARAN -->
 
@@ -2648,9 +2785,9 @@ if (
                                 Ongkir
                             </span>
 
-                            <strong class="free-shipping">
+                            <strong class="free-shipping" id="summaryOngkir">
 
-                                Gratis
+                                <?= $orderTypeCheckout === 'Take Away' ? 'Gratis' : rupiah($ongkir) ?>
 
                             </strong>
 
@@ -2725,12 +2862,12 @@ if (
 
                         <div>
 
-                            <strong>
-                                Gratis Ongkir
+                            <strong id="shippingTitle">
+                                <?= $orderTypeCheckout === 'Take Away' ? 'Take Away - Gratis' : 'Delivery - Ongkir ' . e(rupiah($ongkir)) ?>
                             </strong>
 
-                            <span>
-                                Biaya pengiriman saat ini gratis.
+                            <span id="shippingText">
+                                <?= $orderTypeCheckout === 'Take Away' ? 'Ambil langsung di outlet Toku Coffee.' : 'Pesanan akan diantar ke alamat yang kamu masukkan.' ?>
                             </span>
 
                         </div>
@@ -2754,9 +2891,8 @@ if (
 
                     <p>
 
-                        Pastikan nama penerima, nomor telepon,
-                        kota, alamat dan metode pembayaran sudah
-                        benar sebelum melanjutkan pesanan.
+                        Pastikan tipe pesanan, nama, nomor telepon, alamat (untuk Delivery),
+                        dan metode pembayaran sudah benar sebelum melanjutkan pesanan.
 
                     </p>
 
@@ -2963,86 +3099,88 @@ if (
            KONFIRMASI PESANAN
         ===================================================== */
 
+        function toggleOrderType() {
+            const selected = document.querySelector('input[name="tipe_pesanan"]:checked')?.value || 'Delivery';
+            const deliveryFields = document.getElementById('deliveryFields');
+            const takeAwayInfo = document.getElementById('takeAwayInfo');
+            const kota = document.getElementById('kota');
+            const alamat = document.getElementById('alamat');
+            const title = document.getElementById('shippingTitle');
+            const text = document.getElementById('shippingText');
+            const summaryOngkir = document.getElementById('summaryOngkir');
+
+            document.querySelectorAll('.order-type-option').forEach(el => el.classList.remove('selected'));
+            document.querySelector('input[name="tipe_pesanan"]:checked')?.closest('.order-type-option')?.classList.add('selected');
+
+            if (selected === 'Take Away') {
+                deliveryFields.style.display = 'none';
+                takeAwayInfo.style.display = 'flex';
+                kota.required = false;
+                alamat.required = false;
+                title.textContent = 'Take Away - Gratis';
+                text.textContent = 'Ambil langsung di outlet Toku Coffee.';
+                if (summaryOngkir) summaryOngkir.textContent = 'Gratis';
+            } else {
+                deliveryFields.style.display = 'block';
+                takeAwayInfo.style.display = 'none';
+                kota.required = true;
+                alamat.required = true;
+                title.textContent = 'Delivery - Ongkir Rp 10.000';
+                text.textContent = 'Pesanan akan diantar ke alamat yang kamu masukkan.';
+                if (summaryOngkir) summaryOngkir.textContent = 'Rp 10.000';
+            }
+        }
+
         function konfirmasiPesanan() {
-
-            const nama =
-                document.querySelector(
-                    'input[name="nama"]'
-                )?.value.trim();
-
-            const metode =
-                document.querySelector(
-                    'input[name="metode_pembayaran"]:checked'
-                )?.value;
+            const nama = document.querySelector('input[name="nama"]')?.value.trim();
+            const telepon = document.querySelector('input[name="telepon"]')?.value.trim();
+            const tipe = document.querySelector('input[name="tipe_pesanan"]:checked')?.value;
+            const metode = document.querySelector('input[name="metode_pembayaran"]:checked')?.value;
 
             if (!nama) {
-
-                alert(
-                    'Nama penerima wajib diisi.'
-                );
-
+                alert('Nama pelanggan wajib diisi.');
                 return false;
             }
-
+            if (!telepon) {
+                alert('Nomor telepon wajib diisi.');
+                return false;
+            }
+            if (!tipe) {
+                alert('Silakan pilih Take Away atau Delivery.');
+                return false;
+            }
+            if (tipe === 'Delivery') {
+                const kota = document.querySelector('input[name="kota"]')?.value.trim();
+                const alamat = document.querySelector('textarea[name="alamat"]')?.value.trim();
+                if (!kota || !alamat) {
+                    alert('Kota dan alamat wajib diisi untuk Delivery.');
+                    return false;
+                }
+            }
             if (!metode) {
-
-                alert(
-                    'Silakan pilih metode pembayaran.'
-                );
-
+                alert('Silakan pilih metode pembayaran.');
                 return false;
             }
+
+            let pesan = 'Tipe pesanan: ' + tipe + '\n';
+            pesan += 'Pembayaran: ' + metode + '\n\n';
+            if (tipe === 'Take Away') {
+                pesan += 'Pesanan akan diambil langsung di Toku Coffee.\n\n';
+            } else {
+                pesan += 'Ongkir: Rp 10.000\n\n';
+            }
+            pesan += metode === 'COD' ?
+                'Pesanan COD akan langsung dibuat.\nApakah data pesanan sudah benar?' :
+                'Kamu akan diarahkan ke halaman pembayaran.\nApakah data pesanan sudah benar?';
 
             <?php if ($diskonPromo > 0): ?>
-
-                const promoAktif =
-                    <?= json_encode($kodePromo) ?>;
-
-                const diskon =
-                    <?= json_encode(rupiah($diskonPromo)) ?>;
-
-                if (metode === 'COD') {
-
-                    return confirm(
-                        'Promo ' +
-                        promoAktif +
-                        ' aktif dengan diskon ' +
-                        diskon +
-                        '.\n\n' +
-                        'Pesanan COD akan langsung dibuat. ' +
-                        'Apakah data pesanan sudah benar?'
-                    );
-
-                }
-
-                return confirm(
-                    'Promo ' +
-                    promoAktif +
-                    ' aktif dengan diskon ' +
-                    diskon +
-                    '.\n\n' +
-                    'Kamu akan diarahkan ke halaman pembayaran ' +
-                    'untuk menyelesaikan pembayaran.'
-                );
-
-            <?php else: ?>
-
-                if (metode === 'COD') {
-
-                    return confirm(
-                        'Pesanan COD akan langsung dibuat. ' +
-                        'Apakah data pesanan sudah benar?'
-                    );
-
-                }
-
-                return confirm(
-                    'Kamu akan diarahkan ke halaman pembayaran ' +
-                    'untuk menyelesaikan pembayaran.'
-                );
-
+                pesan = 'Promo <?= e($kodePromo) ?> aktif dengan diskon <?= e(rupiah($diskonPromo)) ?>.\n\n' + pesan;
             <?php endif; ?>
+
+            return confirm(pesan);
         }
+
+        document.addEventListener('DOMContentLoaded', toggleOrderType);
     </script>
 
 </body>

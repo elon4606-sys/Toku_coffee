@@ -3591,7 +3591,7 @@ $totalInventoryRows =
         <!-- LOGO -->
 
         <a
-            href="dashboard.php"
+            href="dashboar.php"
             class="logo">
 
             <i class="fas fa-mug-hot"></i>
@@ -3610,7 +3610,7 @@ $totalInventoryRows =
         </div>
 
 
-        <a href="dashboard.php">
+        <a href="dashboar.php">
 
             <i class="fas fa-chart-pie"></i>
 
