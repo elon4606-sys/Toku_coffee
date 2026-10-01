@@ -1159,6 +1159,71 @@ if (
 
         }
 
+        /* =====================================================
+        AKSI PESANAN
+        ===================================================== */
+
+        .order-actions {
+            display: flex;
+            align-items: center;
+            gap: .8rem;
+            flex-wrap: wrap;
+        }
+
+        .cancel-form {
+            margin: 0;
+        }
+
+        .cancel-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+
+            gap: .5rem;
+
+            padding: .8rem 1.2rem;
+
+            border: .1rem solid #a94442;
+            border-radius: .8rem;
+
+            background: #fff;
+            color: #a94442;
+
+            font-family: inherit;
+            font-size: 1.1rem;
+
+            cursor: pointer;
+
+            transition: .2s ease;
+
+            white-space: nowrap;
+        }
+
+        .cancel-btn:hover {
+            background: #a94442;
+            color: #fff;
+
+            transform: translateY(-2px);
+        }
+
+
+        /* =====================================================
+        MOBILE AKSI PESANAN
+        ===================================================== */
+
+        @media (max-width: 768px) {
+
+            .order-actions {
+                gap: .6rem;
+            }
+
+            .cancel-btn {
+                padding: .7rem 1rem;
+                font-size: 1rem;
+            }
+
+        }
+
         .profile-details {
 
             display: grid;
@@ -1347,6 +1412,221 @@ if (
         /* =====================================================
            ORDER
         ===================================================== */
+        /* =====================================================
+   MODAL KONFIRMASI BATAL PESANAN
+===================================================== */
+
+        .cancel-modal {
+
+            position: fixed;
+
+            inset: 0;
+
+            background: rgba(0, 0, 0, .55);
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            padding: 2rem;
+
+            z-index: 99999;
+
+            opacity: 0;
+            visibility: hidden;
+
+            transition: .25s ease;
+
+        }
+
+        .cancel-modal.active {
+
+            opacity: 1;
+
+            visibility: visible;
+
+        }
+
+        .cancel-modal-box {
+
+            width: 100%;
+            max-width: 45rem;
+
+            background: #fff;
+
+            border-radius: 1.8rem;
+
+            padding: 2.8rem;
+
+            text-align: center;
+
+            box-shadow:
+                0 2rem 5rem rgba(0, 0, 0, .2);
+
+            transform: translateY(-2rem) scale(.96);
+
+            transition: .25s ease;
+
+        }
+
+        .cancel-modal.active .cancel-modal-box {
+
+            transform: translateY(0) scale(1);
+
+        }
+
+        .cancel-modal-icon {
+
+            width: 7rem;
+            height: 7rem;
+
+            margin: 0 auto 1.8rem;
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            border-radius: 50%;
+
+            background: #fceeee;
+
+            color: #a94442;
+
+            font-size: 3rem;
+
+        }
+
+        .cancel-modal-box h3 {
+
+            font-size: 2rem;
+
+            color: #2d211b;
+
+            margin-bottom: 1rem;
+
+        }
+
+        .cancel-modal-box p {
+
+            font-size: 1.3rem;
+
+            color: #777;
+
+            line-height: 1.7;
+
+            margin-bottom: 2rem;
+
+        }
+
+        .cancel-modal-actions {
+
+            display: flex;
+
+            justify-content: center;
+
+            gap: 1rem;
+
+        }
+
+        .cancel-modal-btn {
+
+            min-width: 12rem;
+
+            padding: 1.1rem 1.5rem;
+
+            border-radius: 1rem;
+
+            font-family: inherit;
+
+            font-size: 1.2rem;
+
+            font-weight: 500;
+
+            cursor: pointer;
+
+            transition: .2s ease;
+
+        }
+
+        .cancel-modal-close {
+
+            background: #fff;
+
+            color: var(--main-color);
+
+            border: .1rem solid #ddd;
+
+        }
+
+        .cancel-modal-close:hover {
+
+            background: #f5f1eb;
+
+            border-color: var(--main-color);
+
+        }
+
+        .cancel-modal-confirm {
+
+            background: #a94442;
+
+            color: #fff;
+
+            border: .1rem solid #a94442;
+
+        }
+
+        .cancel-modal-confirm:hover {
+
+            background: #873735;
+
+            transform: translateY(-2px);
+
+        }
+
+        @media (max-width: 500px) {
+
+            .cancel-modal {
+
+                padding: 1.5rem;
+
+            }
+
+            .cancel-modal-box {
+
+                padding: 2rem 1.5rem;
+
+                border-radius: 1.5rem;
+
+            }
+
+            .cancel-modal-box h3 {
+
+                font-size: 1.7rem;
+
+            }
+
+            .cancel-modal-box p {
+
+                font-size: 1.15rem;
+
+            }
+
+            .cancel-modal-actions {
+
+                flex-direction: column;
+
+            }
+
+            .cancel-modal-btn {
+
+                width: 100%;
+
+            }
+
+        }
 
         .table-wrapper {
 
@@ -3048,15 +3328,47 @@ if (
 
                                         <td>
 
-                                            <a
-                                                href="detail-pesanan.php?id=<?= (int)$order['id'] ?>"
-                                                class="detail-btn">
+                                            <div class="order-actions">
 
-                                                <i class="fas fa-eye"></i>
+                                                <!-- DETAIL -->
+                                                <a
+                                                    href="detail-pesanan.php?id=<?= (int)$order['id'] ?>"
+                                                    class="detail-btn">
 
-                                                Detail
+                                                    <i class="fas fa-eye"></i>
 
-                                            </a>
+                                                    Detail
+
+                                                </a>
+
+
+                                                <?php
+                                                $statusOrder = strtolower(
+                                                    trim(
+                                                        $order['status'] ?? ''
+                                                    )
+                                                );
+                                                ?>
+
+
+                                                <!-- BATALKAN -->
+                                                <!-- BATALKAN -->
+                                                <?php if ($statusOrder === 'menunggu'): ?>
+
+                                                    <button
+                                                        type="button"
+                                                        class="cancel-btn"
+                                                        onclick="bukaModalBatal(<?= (int)$order['id'] ?>)">
+
+                                                        <i class="fas fa-ban"></i>
+
+                                                        Batalkan
+
+                                                    </button>
+
+                                                <?php endif; ?>
+
+                                            </div>
 
                                         </td>
 
@@ -3134,7 +3446,79 @@ if (
         </div>
 
     </section>
+    <!-- =====================================================
+     MODAL KONFIRMASI BATAL PESANAN
+===================================================== -->
 
+    <div
+        class="cancel-modal"
+        id="cancelModal">
+
+        <div class="cancel-modal-box">
+
+            <div class="cancel-modal-icon">
+
+                <i class="fas fa-triangle-exclamation"></i>
+
+            </div>
+
+            <h3>
+                Batalkan Pesanan?
+            </h3>
+
+            <p>
+
+                Apakah kamu yakin ingin membatalkan
+                pesanan ini?
+
+                <br>
+
+                <strong>
+                    Pesanan yang sudah dibatalkan
+                    tidak dapat diproses kembali.
+                </strong>
+
+            </p>
+
+            <form
+                action="batalkan-pesanan.php"
+                method="POST">
+
+                <input
+                    type="hidden"
+                    name="pesanan_id"
+                    id="cancelPesananId">
+
+                <div class="cancel-modal-actions">
+
+                    <button
+                        type="button"
+                        class="cancel-modal-btn cancel-modal-close"
+                        onclick="tutupModalBatal()">
+
+                        <i class="fas fa-arrow-left"></i>
+
+                        Tidak, Kembali
+
+                    </button>
+
+                    <button
+                        type="submit"
+                        class="cancel-modal-btn cancel-modal-confirm">
+
+                        <i class="fas fa-ban"></i>
+
+                        Ya, Batalkan
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
 
     <!-- =====================================================
      FOOTER
@@ -3322,7 +3706,76 @@ if (
     <!-- =====================================================
      JAVASCRIPT
 ===================================================== -->
+    <script>
+        /* =====================================================
+       MODAL BATAL PESANAN
+    ===================================================== */
 
+        function bukaModalBatal(pesananId) {
+
+            const modal =
+                document.getElementById('cancelModal');
+
+            const input =
+                document.getElementById('cancelPesananId');
+
+            if (!modal || !input) {
+                return;
+            }
+            input.value = pesananId;
+
+            modal.classList.add('active');
+
+            document.body.style.overflow = 'hidden';
+        }
+
+        function tutupModalBatal() {
+
+            const modal =
+                document.getElementById('cancelModal');
+
+            if (!modal) {
+                return;
+            }
+
+            modal.classList.remove('active');
+
+            document.body.style.overflow = '';
+        }
+        /* Klik area gelap untuk menutup */
+        document.addEventListener(
+            'click',
+            function(event) {
+
+                const modal =
+                    document.getElementById('cancelModal');
+
+                if (!modal) {
+                    return;
+                }
+
+                if (event.target === modal) {
+
+                    tutupModalBatal();
+
+                }
+
+            }
+        );
+        /* Tombol ESC untuk menutup */
+        document.addEventListener(
+            'keydown',
+            function(event) {
+
+                if (event.key === 'Escape') {
+
+                    tutupModalBatal();
+
+                }
+
+            }
+        );
+    </script>
     <script>
         const menuBtn =
             document.querySelector('#menu-btn');
