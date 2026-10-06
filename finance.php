@@ -2158,7 +2158,7 @@ $statusKeuangan = [
         </a>
         <a href="sales.php">
             <i class="fas fa-truck-fast"></i>
-            Sales
+            Pengiriman
         </a>
 
         <div

@@ -2815,10 +2815,16 @@ $environment =
             Pelanggan
 
         </a>
-        
+
         <a href="sales.php">
             <i class="fas fa-truck-fast"></i>
-            Sales
+            Pengiriman
+            <?php if ($pesananBaru > 0): ?>
+                <span class="notification">
+                    <i class="fas fa-bell"></i>
+                    <span><?= $pesananBaru ?></span>
+                </span>
+            <?php endif; ?>
         </a>
 
         <div

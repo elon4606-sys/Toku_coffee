@@ -1,174 +1,483 @@
 <?php
+
 require_once "../config/koneksi.php";
 require_once "../config/session.php";
 require_once "../config/sales_setup.php";
 
-requireRole(['customer']);
-if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+/* =========================================================
+   SESSION
+========================================================= */
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+/* =========================================================
+   CEK LOGIN & ROLE
+   Customer hanya boleh melihat pesanannya sendiri.
+   Admin/Staff boleh membuka tracking dari halaman Sales.
+========================================================= */
+
+if (!isset($_SESSION['user_id'])) {
+    header("Location: ../login/login.php");
+    exit;
+}
+
+$userId = (int)($_SESSION['user_id'] ?? 0);
+$role   = (string)($_SESSION['role'] ?? '');
+
+$allowedRoles = ['customer', 'admin', 'staff'];
+
+if (!in_array($role, $allowedRoles, true)) {
+    header("Location: ../login/login.php?error=akses_ditolak");
+    exit;
+}
+
+/* =========================================================
+   SIAPKAN TABEL SALES
+========================================================= */
 
 try {
     setupSalesPengiriman($conn);
 } catch (Throwable $e) {
+    // Data akan tetap dicoba dimuat. Jika gagal, pesan akan ditampilkan.
 }
 
-function rupiahSalesTrack($angka): string
+/* =========================================================
+   HELPER
+========================================================= */
+
+function eTrack($value): string
 {
-    return 'Rp ' . number_format((float)$angka, 0, ',', '.');
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-function eTrack($v): string
+function waktuTrack($value): string
 {
-    return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    if (empty($value)) {
+        return '-';
+    }
+
+    $time = strtotime($value);
+
+    return $time
+        ? date('d M Y • H:i', $time)
+        : '-';
 }
 
-function waktuTrack($v): string
+function rupiahTrack($value): string
 {
-    $t = strtotime($v);
-    return $t ? date('d M Y • H:i', $t) : '-';
+    return 'Rp ' . number_format(
+        (float)$value,
+        0,
+        ',',
+        '.'
+    );
 }
 
-function statusClassTrack($v): string
+function statusClassTrack($value): string
 {
-    return strtolower(preg_replace('/[^a-z0-9]+/i', '-', trim((string)$v)));
+    return strtolower(
+        preg_replace(
+            '/[^a-z0-9]+/i',
+            '-',
+            trim((string)$value)
+        )
+    );
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
+function labelStatusTrack($status): string
+{
+    $labels = [
+        'Dijadwalkan'      => 'Menunggu Pick Up',
+        'Dalam Perjalanan' => 'Sedang Dikirim',
+        'Terkirim'         => 'Pesanan Diterima',
+        'Dibatalkan'       => 'Dibatalkan'
+    ];
+
+    return $labels[$status] ?? ($status ?: 'Menunggu');
+}
+
+function progressStatusTrack($status): int
+{
+    switch ($status) {
+        case 'Dijadwalkan':
+            return 1;
+        case 'Dalam Perjalanan':
+            return 2;
+        case 'Terkirim':
+            return 3;
+        case 'Dibatalkan':
+            return 0;
+        default:
+            return 1;
+    }
+}
+
+/* =========================================================
+   DATA DASAR
+========================================================= */
+
 $pesananId = (int)($_GET['pesanan'] ?? 0);
+
 $error = '';
+$dbError = '';
+
 $orders = [];
 $shipment = null;
 $events = [];
 
-$result = $conn->prepare("
-    SELECT p.id,p.invoice,p.total,p.tanggal_pesanan,p.status,
-           ps.id AS pengiriman_id, ps.status AS shipping_status, ps.resi, ps.estimasi_tiba,
-           ps.kurir_nama, ps.kurir_telepon, ps.tujuan_lat, ps.tujuan_lng, ps.tujuan_label,
-           j.nama_jasa, j.gps_status, j.gps_lat, j.gps_lng, j.gps_update
-    FROM pesanan p
-    LEFT JOIN pengiriman_sales ps ON ps.pesanan_id=p.id AND ps.status<>'Dibatalkan'
-    LEFT JOIN jasa_pengiriman j ON j.id=ps.jasa_id
-    WHERE p.user_id=?
-    ORDER BY p.tanggal_pesanan DESC
-    LIMIT 20
-");
-$result->bind_param('i', $userId);
-$result->execute();
-$q = $result->get_result();
-while ($r = $q->fetch_assoc()) $orders[] = $r;
-$result->close();
+/* =========================================================
+   DAFTAR PESANAN
 
-if ($pesananId <= 0 && !empty($orders)) $pesananId = (int)$orders[0]['id'];
+   Customer : hanya pesanan miliknya.
+   Admin/Staff : dapat memilih seluruh pesanan untuk kebutuhan
+                 monitoring dari halaman Sales.
+========================================================= */
+
+try {
+
+    if ($role === 'customer') {
+
+        $stmt = $conn->prepare("
+            SELECT
+                p.id,
+                p.invoice,
+                p.total,
+                p.tanggal_pesanan,
+                p.status,
+                ps.status AS shipping_status,
+                ps.resi
+            FROM pesanan p
+            LEFT JOIN pengiriman_sales ps
+                ON ps.pesanan_id = p.id
+                AND ps.status <> 'Dibatalkan'
+            WHERE p.user_id = ?
+            ORDER BY p.tanggal_pesanan DESC
+            LIMIT 20
+        ");
+
+        $stmt->bind_param('i', $userId);
+    } else {
+
+        $stmt = $conn->prepare("
+            SELECT
+                p.id,
+                p.invoice,
+                p.total,
+                p.tanggal_pesanan,
+                p.status,
+                ps.status AS shipping_status,
+                ps.resi
+            FROM pesanan p
+            LEFT JOIN pengiriman_sales ps
+                ON ps.pesanan_id = p.id
+                AND ps.status <> 'Dibatalkan'
+            ORDER BY p.tanggal_pesanan DESC
+            LIMIT 20
+        ");
+    }
+
+    if (!$stmt) {
+        throw new Exception('Query daftar pesanan tidak dapat dibuat.');
+    }
+
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+
+    while ($row = $result->fetch_assoc()) {
+        $orders[] = $row;
+    }
+
+    $stmt->close();
+} catch (Throwable $e) {
+    $dbError = 'Daftar pesanan belum dapat dimuat.';
+}
+
+/* =========================================================
+   PESANAN DEFAULT
+========================================================= */
+
+if ($pesananId <= 0 && !empty($orders)) {
+    $pesananId = (int)$orders[0]['id'];
+}
+
+/* =========================================================
+   DETAIL PESANAN + PENGIRIMAN
+========================================================= */
 
 if ($pesananId > 0) {
-    $stmt = $conn->prepare("
-        SELECT p.id,p.invoice,p.total,p.tanggal_pesanan,p.status,p.alamat_pengiriman,
-               ps.id AS pengiriman_id, ps.status AS shipping_status, ps.resi, ps.estimasi_tiba,
-               ps.kurir_nama,ps.kurir_telepon,ps.tujuan_lat,ps.tujuan_lng,ps.tujuan_label,
-               j.nama_jasa,j.gps_status,j.gps_lat,j.gps_lng,j.gps_update
-        FROM pesanan p
-        LEFT JOIN pengiriman_sales ps ON ps.pesanan_id=p.id AND ps.status<>'Dibatalkan'
-        LEFT JOIN jasa_pengiriman j ON j.id=ps.jasa_id
-        WHERE p.id=? AND p.user_id=?
-        LIMIT 1
-    ");
-    $stmt->bind_param('ii', $pesananId, $userId);
-    $stmt->execute();
-    $shipment = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
 
-    if (!$shipment) {
-        $error = 'Pesanan tidak ditemukan.';
-    } elseif ($shipment['pengiriman_id']) {
-        $stmt = $conn->prepare("SELECT * FROM pengiriman_tracking WHERE pengiriman_id=? ORDER BY waktu_event ASC,id ASC");
-        $sid = (int)$shipment['pengiriman_id'];
-        $stmt->bind_param('i', $sid);
+    try {
+
+        if ($role === 'customer') {
+
+            $stmt = $conn->prepare("
+                SELECT
+                    p.id,
+                    p.invoice,
+                    p.total,
+                    p.tanggal_pesanan,
+                    p.status,
+                    p.alamat_pengiriman,
+
+                    ps.id AS pengiriman_id,
+                    ps.status AS shipping_status,
+                    ps.resi,
+                    ps.estimasi_tiba,
+                    ps.kurir_nama,
+                    ps.kurir_telepon,
+                    ps.tujuan_lat,
+                    ps.tujuan_lng,
+                    ps.tujuan_label,
+                    ps.created_at AS pengiriman_created_at,
+                    ps.updated_at AS pengiriman_updated_at,
+
+                    j.nama_jasa,
+                    j.gps_status,
+                    j.gps_lat,
+                    j.gps_lng,
+                    j.gps_update,
+                    j.gps_device_id
+
+                FROM pesanan p
+
+                LEFT JOIN pengiriman_sales ps
+                    ON ps.pesanan_id = p.id
+                    AND ps.status <> 'Dibatalkan'
+
+                LEFT JOIN jasa_pengiriman j
+                    ON j.id = ps.jasa_id
+
+                WHERE p.id = ?
+                AND p.user_id = ?
+                LIMIT 1
+            ");
+
+            $stmt->bind_param(
+                'ii',
+                $pesananId,
+                $userId
+            );
+        } else {
+
+            $stmt = $conn->prepare("
+                SELECT
+                    p.id,
+                    p.invoice,
+                    p.total,
+                    p.tanggal_pesanan,
+                    p.status,
+                    p.alamat_pengiriman,
+
+                    ps.id AS pengiriman_id,
+                    ps.status AS shipping_status,
+                    ps.resi,
+                    ps.estimasi_tiba,
+                    ps.kurir_nama,
+                    ps.kurir_telepon,
+                    ps.tujuan_lat,
+                    ps.tujuan_lng,
+                    ps.tujuan_label,
+                    ps.created_at AS pengiriman_created_at,
+                    ps.updated_at AS pengiriman_updated_at,
+
+                    j.nama_jasa,
+                    j.gps_status,
+                    j.gps_lat,
+                    j.gps_lng,
+                    j.gps_update,
+                    j.gps_device_id
+
+                FROM pesanan p
+
+                LEFT JOIN pengiriman_sales ps
+                    ON ps.pesanan_id = p.id
+                    AND ps.status <> 'Dibatalkan'
+
+                LEFT JOIN jasa_pengiriman j
+                    ON j.id = ps.jasa_id
+
+                WHERE p.id = ?
+                LIMIT 1
+            ");
+
+            $stmt->bind_param(
+                'i',
+                $pesananId
+            );
+        }
+
+        if (!$stmt) {
+            throw new Exception('Query detail pesanan tidak dapat dibuat.');
+        }
+
         $stmt->execute();
-        $q = $stmt->get_result();
-        while ($r = $q->fetch_assoc()) $events[] = $r;
+
+        $shipment = $stmt->get_result()->fetch_assoc();
+
         $stmt->close();
+
+        if (!$shipment) {
+
+            $error = 'Pesanan tidak ditemukan.';
+        } elseif (!empty($shipment['pengiriman_id'])) {
+
+            $shipmentId = (int)$shipment['pengiriman_id'];
+
+            $stmt = $conn->prepare("
+                SELECT
+                    id,
+                    pengiriman_id,
+                    status,
+                    judul,
+                    keterangan,
+                    lokasi,
+                    latitude,
+                    longitude,
+                    waktu_event,
+                    dibuat_oleh,
+                    created_at
+                FROM pengiriman_tracking
+                WHERE pengiriman_id = ?
+                ORDER BY waktu_event ASC, id ASC
+            ");
+
+            $stmt->bind_param(
+                'i',
+                $shipmentId
+            );
+
+            $stmt->execute();
+
+            $result = $stmt->get_result();
+
+            while ($row = $result->fetch_assoc()) {
+                $events[] = $row;
+            }
+
+            $stmt->close();
+        }
+    } catch (Throwable $e) {
+        $error = 'Data tracking belum dapat ditampilkan.';
     }
 }
 
-$labels = [
-    'Dijadwalkan'      => 'Menunggu Pick Up',
-    'Dalam Perjalanan' => 'Sedang Dikirim',
-    'Terkirim'         => 'Pesanan Diterima',
-    'Dibatalkan'       => 'Dibatalkan'
-];
+/* =========================================================
+   DATA TAMPILAN
+========================================================= */
 
-$currentStatus = $shipment['shipping_status'] ?? ($shipment['status'] ?? 'Menunggu');
-$currentLabel = $labels[$currentStatus] ?? $currentStatus;
-$currentClass = statusClassTrack($currentStatus);
+$shippingStatus = $shipment['shipping_status'] ?? '';
 
-$trackingSteps = [
-    ['status' => 'Dijadwalkan', 'label' => 'Diproses', 'icon' => 'fa-box'],
-    ['status' => 'Dalam Perjalanan', 'label' => 'Dikirim', 'icon' => 'fa-truck-fast'],
-    ['status' => 'Terkirim', 'label' => 'Selesai', 'icon' => 'fa-circle-check']
-];
+$displayStatus = $shippingStatus !== ''
+    ? $shippingStatus
+    : ($shipment['status'] ?? 'Menunggu');
 
-$progressIndex = -1;
-if ($currentStatus === 'Dijadwalkan') $progressIndex = 0;
-if ($currentStatus === 'Dalam Perjalanan') $progressIndex = 1;
-if ($currentStatus === 'Terkirim') $progressIndex = 2;
-$isCancelled = $currentStatus === 'Dibatalkan';
+$statusLabel = labelStatusTrack($displayStatus);
+$statusClass = statusClassTrack($displayStatus);
+$progress = progressStatusTrack($shippingStatus);
+
+$namaJasa = trim((string)($shipment['nama_jasa'] ?? ''));
+$namaKurir = trim((string)($shipment['kurir_nama'] ?? ''));
+$teleponKurir = trim((string)($shipment['kurir_telepon'] ?? ''));
+
+$namaKurirTampil = $namaKurir !== ''
+    ? $namaKurir
+    : ($namaJasa !== '' ? $namaJasa : '-');
+
+$gpsLat = $shipment['gps_lat'] ?? null;
+$gpsLng = $shipment['gps_lng'] ?? null;
+$tujuanLat = $shipment['tujuan_lat'] ?? null;
+$tujuanLng = $shipment['tujuan_lng'] ?? null;
+
+$hasGps = $shipment
+    && $shipment['pengiriman_id']
+    && $gpsLat !== null
+    && $gpsLng !== null;
+
+$hasDestination = $shipment
+    && $shipment['tujuan_lat'] !== null
+    && $shipment['tujuan_lng'] !== null;
+
+$destinationLabel = trim((string)($shipment['tujuan_label'] ?? ''));
+
+/* =========================================================
+   INFORMASI ROLE / NAVIGASI
+========================================================= */
+
+if ($role === 'customer') {
+    $backUrl = 'produk.php';
+    $backLabel = 'Belanja';
+    $roleLabel = 'Customer';
+} else {
+    $backUrl = '../sales.php';
+    $backLabel = 'Kembali ke Sales';
+    $roleLabel = ucfirst($role);
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="id">
 
 <head>
+
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0">
+
     <title>Lacak Pengiriman - Toku Coffee</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;300;400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com">
+
+    <link
+        rel="preconnect"
+        href="https://fonts.gstatic.com"
+        crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
     <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+        }
+
         :root {
             --main-color: #443;
-            --border-radius: 95% 4% 97% 5% / 4% 94% 3% 95%;
-            --border-radius-hover: 4% 95% 6% 95% / 95% 4% 92% 5%;
-            --border: .2rem solid var(--main-color);
-            --border-hover: .2rem dashed var(--main-color);
-            --bg: #faf9f5;
+            --bg: #f5f5f5;
             --white: #fff;
+            --border: #e5e5e5;
             --green: #527853;
             --orange: #c68b3c;
-            --red: #a94442;
             --blue: #557a95;
-            --gray: #888;
-            --soft: #f7f4ec;
-            --line: #e9e7df;
-            --shadow: 0 1rem 2.5rem rgba(68, 68, 51, .07);
-        }
-
-        * {
-            font-family: 'Poppins', sans-serif;
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            outline: none;
-            border: none;
-            text-decoration: none;
-            transition: all .2s linear;
-        }
-
-        html {
-            font-size: 56%;
-            overflow-x: hidden;
-            scroll-behavior: smooth;
+            --red: #a94442;
+            --muted: #999;
+            --soft: #faf8f4;
         }
 
         body {
+            margin: 0;
             background: var(--bg);
-            color: var(--main-color);
-            min-height: 100vh;
+            color: #333;
         }
 
         a {
+            text-decoration: none;
             color: inherit;
         }
 
@@ -178,185 +487,134 @@ $isCancelled = $currentStatus === 'Dibatalkan';
             font: inherit;
         }
 
-        .topbar {
-            min-height: 6.8rem;
+        /* =====================================================
+           HEADER
+        ===================================================== */
+
+        .top {
             background: #fff;
+            border-bottom: 1px solid #eee;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .topin {
+            width: 100%;
+            max-width: 1050px;
+            margin: auto;
+            padding: 14px 15px;
+            min-height: 58px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 1rem 3rem;
-            box-shadow: 0 .3rem 1rem rgba(0, 0, 0, .05);
-            position: sticky;
-            top: 0;
-            z-index: 900;
+            gap: 15px;
         }
 
-        .topbar-left,
-        .topbar-right {
+        .brand {
             display: flex;
             align-items: center;
-            gap: 1.3rem;
+            gap: 8px;
+            color: var(--main-color);
+            font-size: 17px;
+            font-weight: 700;
         }
 
-        .back-btn {
-            width: 3.5rem;
-            height: 3.5rem;
+        .brand i {
+            font-size: 17px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .top-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            border: .1rem solid #ddd;
-            border-radius: 45% 55% 60% 40%;
+            gap: 6px;
+            padding: 8px 11px;
+            border: 1px solid #ddd;
+            border-radius: 7px;
             background: #fff;
+            color: #444;
+            font-size: 11px;
+        }
+
+        .top-btn:hover {
+            border-color: var(--main-color);
+        }
+
+        /* =====================================================
+           PAGE
+        ===================================================== */
+
+        .page {
+            width: 100%;
+            max-width: 1050px;
+            margin: auto;
+            padding: 22px 15px 35px;
+        }
+
+        .page-title {
+            margin-bottom: 16px;
+        }
+
+        .page-title h1 {
+            margin: 0 0 4px;
+            font-size: 22px;
             color: var(--main-color);
-        }
-
-        .back-btn:hover {
-            border: var(--border);
-            transform: translateX(-.2rem);
-            background: var(--soft);
-        }
-
-        .logo {
-            color: var(--main-color);
-            font-size: 2rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: .7rem;
-        }
-
-        .logo i {
-            font-size: 2.1rem;
-        }
-
-        .logo:hover {
-            transform: scale(1.02);
-        }
-
-        .divider {
-            width: .1rem;
-            height: 2.8rem;
-            background: #eee;
-        }
-
-        .page-title h2 {
-            font-size: 1.5rem;
-            line-height: 1.2;
+            font-weight: 700;
         }
 
         .page-title p {
-            font-size: .9rem;
-            color: #999;
-            margin-top: .25rem;
+            margin: 0;
+            color: #888;
+            font-size: 11px;
         }
 
-        .customer-chip {
-            display: flex;
-            align-items: center;
-            gap: .7rem;
-            padding: .65rem 1rem;
-            background: #faf8f1;
-            border: .1rem solid #eee;
-            border-radius: var(--border-radius);
-            font-size: 1rem;
-        }
+        /* =====================================================
+           ORDER SELECTOR
+        ===================================================== */
 
-        .main {
-            max-width: 120rem;
-            margin: 0 auto;
-            padding: 2rem 3rem 3rem;
-            animation: fadeUp .5s ease;
-        }
-
-        .breadcrumb {
-            display: flex;
-            align-items: center;
-            gap: .6rem;
-            color: #999;
-            font-size: .9rem;
-            margin-bottom: 1.3rem;
-        }
-
-        .breadcrumb a:hover {
-            color: var(--main-color);
-        }
-
-        .breadcrumb i {
-            font-size: .75rem;
-        }
-
-        .section-heading {
-            margin-bottom: 1.3rem;
-        }
-
-        .section-heading h2 {
-            font-size: 1.7rem;
-        }
-
-        .section-heading p {
-            color: #999;
-            font-size: .95rem;
-            margin-top: .25rem;
+        .orders-wrap {
+            margin-bottom: 14px;
         }
 
         .orders {
             display: flex;
-            gap: 1rem;
+            gap: 9px;
             overflow-x: auto;
-            padding: .2rem .1rem 1.7rem;
-            margin-bottom: 1rem;
+            padding: 2px 2px 8px;
             scrollbar-width: thin;
         }
 
         .order-card {
-            flex: 0 0 23rem;
+            min-width: 225px;
             background: #fff;
-            border: .1rem solid #ddd;
-            border-radius: 1.5rem;
-            padding: 1.2rem;
-            position: relative;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 11px 12px;
+            transition: .2s ease;
         }
 
         .order-card:hover {
-            border: var(--border);
-            background: #fff;
-            transform: translateY(-.2rem);
-            box-shadow: var(--shadow);
+            border-color: #cfcfcf;
+            transform: translateY(-1px);
         }
 
         .order-card.active {
-            border: var(--border);
-            background: #f3f0e8;
-            box-shadow: 0 .6rem 1.5rem rgba(68, 68, 51, .06);
-        }
-
-        .order-card .order-top {
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            align-items: center;
-            margin-bottom: .8rem;
-        }
-
-        .order-card .order-icon {
-            width: 3.2rem;
-            height: 3.2rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: .1rem solid var(--main-color);
-            border-radius: 45% 55% 60% 40%;
-            font-size: 1.35rem;
-        }
-
-        .order-card.active .order-icon {
-            background: var(--main-color);
-            color: #fff;
+            border-color: var(--main-color);
+            background: #f7f4ec;
         }
 
         .order-card strong {
             display: block;
-            font-size: .95rem;
+            color: #333;
+            font-size: 11px;
+            font-weight: 600;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -364,582 +622,493 @@ $isCancelled = $currentStatus === 'Dibatalkan';
 
         .order-card small {
             display: block;
+            margin-top: 3px;
             color: #999;
-            font-size: .9rem;
-            margin-top: .35rem;
+            font-size: 9px;
         }
 
-        .order-status-mini {
-            display: inline-flex;
-            margin-top: .8rem;
-            padding: .35rem .8rem;
-            border: .1rem solid currentColor;
-            border-radius: var(--border-radius);
-            font-size: .82rem;
+        /* =====================================================
+           ERROR
+        ===================================================== */
+
+        .error-box {
+            margin-bottom: 14px;
+            padding: 10px 12px;
+            border: 1px solid #edc1c1;
+            border-radius: 7px;
+            background: #fff1f1;
+            color: var(--red);
+            font-size: 11px;
         }
+
+        /* =====================================================
+           MAIN HERO
+        ===================================================== */
 
         .hero {
             background: #fff;
-            border: var(--border);
-            border-radius: var(--border-radius);
-            padding: 1.8rem;
-            margin-bottom: 1.6rem;
-            box-shadow: var(--shadow);
-        }
-
-        .hero:hover,
-        .panel:hover {
-            border: var(--border-hover);
-            border-radius: var(--border-radius-hover);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .04);
+            padding: 18px;
+            margin-bottom: 14px;
         }
 
         .hero-top {
             display: flex;
             justify-content: space-between;
-            gap: 1.5rem;
+            gap: 16px;
             align-items: flex-start;
         }
 
-        .eyebrow {
-            font-size: .9rem;
+        .invoice-label {
             color: #999;
-            margin-bottom: .3rem;
+            font-size: 10px;
+            margin-bottom: 3px;
         }
 
-        .hero h1 {
-            font-size: 2rem;
-            line-height: 1.3;
+        .hero h2 {
+            margin: 0 0 4px;
+            color: #252525;
+            font-size: 19px;
+            font-weight: 600;
         }
 
-        .address {
-            font-size: .95rem;
+        .destination {
             color: #777;
-            margin-top: .7rem;
+            font-size: 10px;
             line-height: 1.55;
-            max-width: 76rem;
+            max-width: 760px;
         }
 
         .badge {
             display: inline-flex;
             align-items: center;
-            gap: .45rem;
-            padding: .65rem 1rem;
-            border: .1rem solid currentColor;
-            border-radius: var(--border-radius);
-            font-size: .88rem;
+            justify-content: center;
+            padding: 6px 9px;
+            border: 1px solid currentColor;
+            border-radius: 6px;
+            font-size: 9px;
             white-space: nowrap;
         }
 
         .dijadwalkan {
             color: var(--orange);
-            background: #fff7e9
+            background: #fff7e9;
         }
 
         .dalam-perjalanan {
             color: var(--blue);
-            background: #eef5f9
+            background: #eef5f9;
         }
 
-        .terkirim {
+        .terkirim,
+        .selesai {
             color: var(--green);
-            background: #f0f7f0
+            background: #f0f7f0;
         }
 
         .dibatalkan {
             color: #777;
-            background: #f1f1f1
+            background: #f1f1f1;
         }
 
-        .menunggu {
-            color: var(--red);
-            background: #fff0ef
-        }
+        /* =====================================================
+           PROGRESS
+        ===================================================== */
 
         .progress {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 0;
-            margin: 1.8rem 0 1.2rem;
-            padding: 0 .4rem;
+            gap: 12px;
+            margin-top: 18px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
         }
 
-        .step {
+        .progress-item {
             position: relative;
             text-align: center;
             color: #aaa;
-            padding-top: 3.5rem;
+            font-size: 9px;
         }
 
-        .step:before {
+        .progress-item:not(:last-child)::after {
             content: '';
             position: absolute;
-            top: 1.35rem;
-            left: 0;
-            right: 0;
-            height: .18rem;
+            top: 9px;
+            left: calc(50% + 15px);
+            right: calc(-50% + 15px);
+            height: 2px;
             background: #ddd;
-            z-index: 0;
         }
 
-        .step:first-child:before {
-            left: 50%;
-        }
-
-        .step:last-child:before {
-            right: 50%;
-        }
-
-        .step-dot {
-            position: absolute;
-            top: .3rem;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 2.2rem;
-            height: 2.2rem;
-            border-radius: 50%;
-            background: #fff;
-            border: .25rem solid #ccc;
+        .progress-dot {
+            width: 18px;
+            height: 18px;
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 2;
-            font-size: .85rem;
+            margin: 0 auto 6px;
+            border-radius: 50%;
+            border: 2px solid #ddd;
+            background: #fff;
+            position: relative;
+            z-index: 1;
+            font-size: 8px;
         }
 
-        .step.done {
+        .progress-item.done {
             color: var(--green);
         }
 
-        .step.done:before,
-        .step.current:before {
+        .progress-item.done .progress-dot {
+            border-color: var(--green);
+            background: var(--green);
+            color: #fff;
+        }
+
+        .progress-item.done:not(:last-child)::after {
             background: var(--green);
         }
 
-        .step.done .step-dot,
-        .step.current .step-dot {
-            border-color: var(--green);
-            background: #f0f7f0;
-            color: var(--green);
-        }
-
-        .step.current {
+        .progress-item.current {
             color: var(--main-color);
-            font-weight: 500;
+            font-weight: 600;
         }
 
-        .step.current .step-dot {
-            box-shadow: 0 0 0 .45rem rgba(82, 120, 83, .08);
+        .progress-item.current .progress-dot {
+            border-color: var(--main-color);
+            box-shadow: 0 0 0 3px #f3f0e8;
         }
 
-        .step span {
-            display: block;
-            font-size: .88rem;
-        }
-
-        .cancel-note {
-            margin-top: 1rem;
-            padding: 1rem 1.2rem;
-            background: #fff0ef;
-            border: .1rem solid #f0d1ce;
-            border-radius: var(--border-radius);
-            color: var(--red);
-            font-size: .9rem;
-        }
+        /* =====================================================
+           INFO BOXES
+        ===================================================== */
 
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: .9rem;
-            margin-top: 1.5rem;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 9px;
+            margin-top: 14px;
         }
 
         .info-box {
-            background: #faf8f1;
-            border: .1rem solid #eee;
-            border-radius: 1.4rem;
-            padding: 1.1rem 1.2rem;
-            min-height: 7rem;
-        }
-
-        .info-box:hover {
-            background: #f7f4ec;
-            transform: translateY(-.15rem);
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 7px;
+            padding: 11px 12px;
         }
 
         .info-box strong {
             display: block;
-            font-size: .82rem;
             color: #999;
-            margin-bottom: .4rem;
+            font-size: 9px;
+            font-weight: 500;
+            margin-bottom: 4px;
         }
 
         .info-box span {
             display: block;
-            font-size: 1rem;
+            color: #333;
+            font-size: 11px;
             font-weight: 500;
             word-break: break-word;
-            line-height: 1.45;
         }
 
-        .hero-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: .7rem;
-            margin-top: 1.3rem;
+        .gps-online {
+            color: var(--green) !important;
         }
 
-        .grid {
+        .gps-offline {
+            color: #777 !important;
+        }
+
+        /* =====================================================
+           GRID TRACKING
+        ===================================================== */
+
+        .tracking-grid {
             display: grid;
-            grid-template-columns: 1.25fr .85fr;
-            gap: 1.5rem;
+            grid-template-columns: 1.25fr .75fr;
+            gap: 14px;
             align-items: start;
         }
 
-        .panel {
+        .card {
             background: #fff;
-            border: var(--border);
-            border-radius: var(--border-radius);
-            padding: 1.6rem;
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .04);
+            padding: 17px;
         }
 
-        .panel-header {
+        .card-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 1.3rem;
+            gap: 10px;
+            margin-bottom: 12px;
         }
 
-        .panel-header h2 {
-            font-size: 1.45rem;
+        .card h3 {
+            margin: 0;
+            color: #292929;
+            font-size: 15px;
+            font-weight: 600;
         }
 
-        .panel-header p {
+        .card-subtitle {
             color: #999;
-            font-size: .85rem;
-            margin-top: .2rem;
+            font-size: 9px;
         }
 
-        .panel-header>i {
-            font-size: 1.8rem !important;
-        }
+        /* =====================================================
+           MAP
+        ===================================================== */
 
-        .map {
-            height: 36rem;
+        #trackMap {
             width: 100%;
-            border: .1rem solid #ddd;
-            border-radius: 1.4rem;
+            height: 360px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
             overflow: hidden;
             background: #eee;
         }
 
         .map-note {
-            margin-top: .9rem;
-            padding: 1rem 1.2rem;
-            border-radius: 1.2rem;
-            background: #faf8f1;
-            color: #777;
-            font-size: .86rem;
-            line-height: 1.55;
+            margin: 9px 0 0;
+            color: #999;
+            font-size: 9px;
+            line-height: 1.5;
         }
 
-        .courier-card {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 1.1rem;
-            background: #faf8f1;
-            border: .1rem solid #eee;
-            border-radius: 1.3rem;
-            margin-bottom: 1rem;
-        }
+        /* =====================================================
+           COURIER
+        ===================================================== */
 
-        .courier-avatar {
-            width: 4rem;
-            height: 4rem;
-            border-radius: 45% 55% 60% 40%;
-            background: var(--main-color);
-            color: #fff;
+        .courier-box {
             display: flex;
             align-items: center;
-            justify-content: center;
-            font-size: 1.6rem;
-            flex: 0 0 4rem;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 12px;
+            padding: 10px 11px;
+            border: 1px solid #eee;
+            border-radius: 7px;
+            background: #fafafa;
         }
 
         .courier-main {
-            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 9px;
             min-width: 0;
         }
 
-        .courier-main strong {
-            display: block;
-            font-size: 1rem;
-        }
-
-        .courier-main small {
-            display: block;
-            margin-top: .25rem;
-            color: #999;
-            font-size: .82rem;
-        }
-
-        .call-btn {
-            width: 3.4rem;
-            height: 3.4rem;
+        .courier-icon {
+            width: 34px;
+            height: 34px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border: .1rem solid var(--green);
-            border-radius: 50%;
-            color: var(--green);
+            flex: 0 0 34px;
+            border-radius: 8px;
+            background: #f3f0e8;
+            color: var(--main-color);
+        }
+
+        .courier-info strong {
+            display: block;
+            color: #333;
+            font-size: 10px;
+        }
+
+        .courier-info span {
+            display: block;
+            margin-top: 2px;
+            color: #999;
+            font-size: 9px;
+        }
+
+        .call-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 7px 9px;
+            border: 1px solid var(--main-color);
+            border-radius: 6px;
+            color: var(--main-color);
             background: #fff;
+            font-size: 9px;
         }
 
         .call-btn:hover {
-            background: #f0f7f0;
-            transform: scale(1.05);
+            background: #f7f4ec;
         }
 
-        .delivery-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 1rem;
-            padding: .9rem 0;
-            border-bottom: .1rem solid #eee;
-        }
-
-        .delivery-row:last-child {
-            border-bottom: 0;
-        }
-
-        .delivery-row strong {
-            font-size: .82rem;
-            color: #999;
-            display: block;
-            margin-bottom: .2rem;
-        }
-
-        .delivery-row span {
-            font-size: .95rem;
-            line-height: 1.45;
-        }
-
-        .tracking-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: .45rem;
-            padding: .35rem .65rem;
-            border-radius: var(--border-radius);
-            font-size: .78rem;
-        }
-
-        .tracking-chip.online {
-            color: var(--green);
-            background: #f0f7f0
-        }
-
-        .tracking-chip.offline {
-            color: #777;
-            background: #f1f1f1
-        }
+        /* =====================================================
+           TIMELINE
+        ===================================================== */
 
         .timeline {
             position: relative;
-            padding-left: 2.8rem;
+            padding-left: 25px;
         }
 
-        .timeline:before {
+        .timeline::before {
             content: '';
             position: absolute;
-            left: .78rem;
-            top: .6rem;
-            bottom: .6rem;
-            width: .18rem;
-            background: #ddd;
+            left: 6px;
+            top: 6px;
+            bottom: 6px;
+            width: 2px;
+            background: #e2e2e2;
         }
 
         .event {
             position: relative;
-            padding-bottom: 1.8rem;
+            padding: 0 0 18px 8px;
         }
 
         .event:last-child {
-            padding-bottom: .3rem;
+            padding-bottom: 0;
         }
 
         .event-dot {
             position: absolute;
-            left: -2.47rem;
-            top: .1rem;
-            width: 1.55rem;
-            height: 1.55rem;
-            background: #fff;
-            border: .25rem solid #aaa;
+            left: -24px;
+            top: 1px;
+            width: 14px;
+            height: 14px;
+            border: 3px solid #bbb;
             border-radius: 50%;
+            background: #fff;
         }
 
         .event.active .event-dot {
             border-color: var(--green);
-            background: #f0f7f0;
-            box-shadow: 0 0 0 .4rem rgba(82, 120, 83, .08);
+            background: var(--green);
+            box-shadow: 0 0 0 3px #f0f7f0;
         }
 
         .event h4 {
             margin: 0;
-            font-size: .95rem;
+            color: #333;
+            font-size: 10px;
+            font-weight: 600;
         }
 
         .event p {
-            margin: .35rem 0;
-            font-size: .85rem;
+            margin: 4px 0;
             color: #777;
-            line-height: 1.55;
+            font-size: 9px;
+            line-height: 1.5;
         }
 
         .event small {
-            font-size: .78rem;
-            color: #999;
-            line-height: 1.45;
+            color: #aaa;
+            font-size: 8px;
+            line-height: 1.5;
         }
 
         .note {
-            margin-top: 1.4rem;
-            padding: 1rem 1.2rem;
-            background: #f7f4ec;
-            border: .1rem solid #eee;
-            border-radius: 1.2rem;
-            font-size: .85rem;
-            color: #777;
-            line-height: 1.55;
+            margin-top: 14px;
+            padding: 10px 11px;
+            border-radius: 7px;
+            background: #fffaf0;
+            border: 1px solid #f0dfb7;
+            color: #755d2b;
+            font-size: 9px;
+            line-height: 1.5;
         }
 
-        .btn {
+        /* =====================================================
+           ACTIONS
+        ===================================================== */
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            margin-top: 12px;
+        }
+
+        .action-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: .55rem;
-            padding: .75rem 1.15rem;
-            border: var(--border);
-            border-radius: var(--border-radius);
-            color: var(--main-color);
+            gap: 6px;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 7px;
             background: #fff;
-            cursor: pointer;
-            font-size: .85rem;
+            color: #444;
+            font-size: 9px;
         }
 
-        .btn:hover {
-            border: var(--border-hover);
-            border-radius: var(--border-radius-hover);
-            background: #f7f4ec;
-            transform: translateY(-.15rem);
-        }
-
-        .btn.green {
-            border-color: var(--green);
-            color: var(--green);
-        }
-
-        .btn.green:hover {
-            background: #f0f7f0;
-        }
-
-        .flash {
-            padding: 1rem 1.2rem;
-            margin-bottom: 1.5rem;
-            border: .1rem solid currentColor;
-            border-radius: var(--border-radius);
-            font-size: .9rem;
-        }
-
-        .flash.error {
-            color: var(--red);
-            background: #fff0ef;
+        .action-btn:hover {
+            border-color: var(--main-color);
         }
 
         .empty {
+            padding: 35px 12px;
             text-align: center;
-            padding: 3rem 1rem;
             color: #999;
-            font-size: .9rem;
+            font-size: 11px;
         }
 
         .empty i {
             display: block;
-            font-size: 3rem;
-            margin-bottom: .8rem;
+            margin-bottom: 9px;
+            font-size: 30px;
         }
 
-        .leaflet-popup-content {
-            font-family: Poppins, sans-serif;
-            font-size: 1rem;
-            line-height: 1.5;
-        }
+        /* =====================================================
+           RESPONSIVE
+        ===================================================== */
 
-        .leaflet-control-zoom a {
-            color: var(--main-color) !important;
-        }
+        @media (max-width: 850px) {
 
-        @keyframes fadeUp {
-            from {
-                opacity: 0;
-                transform: translateY(1rem);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @media(max-width:1000px) {
-            .grid {
+            .tracking-grid {
                 grid-template-columns: 1fr;
             }
 
             .info-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .topbar {
-                padding: 1rem 2rem;
-            }
-
-            .main {
-                padding: 1.6rem 2rem 2.5rem;
+                grid-template-columns: 1fr 1fr;
             }
         }
 
-        @media(max-width:650px) {
-            html {
-                font-size: 52%;
+        @media (max-width: 550px) {
+
+            .topin,
+            .page {
+                padding-left: 10px;
+                padding-right: 10px;
             }
 
-            .topbar {
-                min-height: 6rem;
+            .topin {
+                min-height: 52px;
             }
 
-            .topbar-left {
-                gap: .8rem;
+            .brand {
+                font-size: 15px;
             }
 
-            .page-title {
+            .top-btn span {
                 display: none;
             }
 
-            .customer-chip {
-                display: none;
+            .page {
+                padding-top: 16px;
             }
 
-            .main {
-                padding: 1.3rem 1.2rem 2rem;
+            .page-title h1 {
+                font-size: 19px;
             }
 
             .hero {
-                padding: 1.3rem;
+                padding: 14px;
             }
 
             .hero-top {
@@ -947,658 +1116,584 @@ $isCancelled = $currentStatus === 'Dibatalkan';
             }
 
             .info-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .map {
-                height: 31rem;
-            }
-
-            .progress {
-                margin-top: 1.4rem;
-            }
-        }
-
-        @media(max-width:430px) {
-            .info-grid {
                 grid-template-columns: 1fr;
             }
 
-            .logo {
-                font-size: 1.75rem;
+            .progress {
+                gap: 5px;
             }
 
-            .back-btn {
-                width: 3.1rem;
-                height: 3.1rem;
-            }
-        }
-
-        /* =====================================================
-           UKURAN KOMPAK - MENYESUAIKAN HALAMAN PEMBAYARAN
-        ===================================================== */
-        html {
-            font-size: 62.5%;
-        }
-
-        .topbar {
-            min-height: 58px;
-            padding: 0 20px;
-        }
-
-        .main {
-            max-width: 1050px;
-            padding: 24px 15px 32px;
-        }
-
-        .logo {
-            font-size: 20px;
-            gap: 7px;
-        }
-
-        .logo i {
-            font-size: 20px;
-        }
-
-        .back-btn {
-            width: 34px;
-            height: 34px;
-        }
-
-        .page-title h2 {
-            font-size: 14px;
-        }
-
-        .page-title p {
-            font-size: 10px;
-        }
-
-        .customer-chip {
-            padding: 6px 9px;
-            font-size: 10px;
-        }
-
-        .breadcrumb {
-            font-size: 10px;
-            margin-bottom: 12px;
-        }
-
-        .section-heading {
-            margin-bottom: 12px;
-        }
-
-        .section-heading h2 {
-            font-size: 17px;
-        }
-
-        .section-heading p {
-            font-size: 10px;
-        }
-
-        .orders {
-            gap: 12px;
-            padding: 2px 1px 14px;
-            margin-bottom: 8px;
-        }
-
-        .order-card {
-            flex: 0 0 210px;
-            border-radius: 8px;
-            padding: 12px;
-        }
-
-        .order-card .order-top {
-            margin-bottom: 7px;
-        }
-
-        .order-card .order-icon {
-            width: 30px;
-            height: 30px;
-            font-size: 13px;
-        }
-
-        .order-card strong {
-            font-size: 11px;
-        }
-
-        .order-card small {
-            font-size: 9px;
-            margin-top: 3px;
-        }
-
-        .order-status-mini {
-            margin-top: 7px;
-            padding: 3px 7px;
-            font-size: 8px;
-        }
-
-        .hero {
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 16px;
-        }
-
-        .hero-top {
-            gap: 14px;
-        }
-
-        .eyebrow {
-            font-size: 10px;
-        }
-
-        .hero h1 {
-            font-size: 19px;
-        }
-
-        .address {
-            font-size: 11px;
-            margin-top: 6px;
-        }
-
-        .badge {
-            padding: 5px 9px;
-            font-size: 9px;
-        }
-
-        .progress {
-            margin: 16px 0 12px;
-        }
-
-        .step {
-            padding-top: 30px;
-        }
-
-        .step-dot {
-            width: 21px;
-            height: 21px;
-            font-size: 8px;
-        }
-
-        .step span {
-            font-size: 9px;
-        }
-
-        .step:before {
-            top: 12px;
-            height: 2px;
-        }
-
-        .info-grid {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-            margin-top: 14px;
-        }
-
-        .info-box {
-            min-height: 70px;
-            padding: 10px 11px;
-            border-radius: 8px;
-        }
-
-        .info-box strong {
-            font-size: 8px;
-            margin-bottom: 4px;
-        }
-
-        .info-box span {
-            font-size: 10px;
-        }
-
-        .hero-actions {
-            gap: 7px;
-            margin-top: 12px;
-        }
-
-        .grid {
-            gap: 16px;
-        }
-
-        .panel {
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 16px;
-        }
-
-        .panel-header {
-            margin-bottom: 12px;
-        }
-
-        .panel-header h2 {
-            font-size: 15px;
-        }
-
-        .panel-header p {
-            font-size: 9px;
-        }
-
-        .panel-header>i {
-            font-size: 16px !important;
-        }
-
-        .map {
-            height: 360px;
-            border-radius: 8px;
-        }
-
-        .map-note {
-            margin-top: 9px;
-            padding: 10px 11px;
-            font-size: 9px;
-        }
-
-        .courier-card {
-            gap: 10px;
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-
-        .courier-avatar {
-            width: 38px;
-            height: 38px;
-            flex: 0 0 38px;
-            font-size: 15px;
-        }
-
-        .courier-main strong {
-            font-size: 10px;
-        }
-
-        .courier-main small {
-            font-size: 8px;
-        }
-
-        .call-btn {
-            width: 32px;
-            height: 32px;
-            font-size: 11px;
-        }
-
-        .delivery-row {
-            padding: 8px 0;
-            gap: 10px;
-        }
-
-        .delivery-row strong {
-            font-size: 8px;
-            margin-bottom: 2px;
-        }
-
-        .delivery-row span {
-            font-size: 10px;
-        }
-
-        .tracking-chip {
-            padding: 3px 6px;
-            font-size: 8px;
-        }
-
-        .timeline {
-            padding-left: 25px;
-        }
-
-        .timeline:before {
-            left: 7px;
-            width: 2px;
-        }
-
-        .event {
-            padding-bottom: 17px;
-        }
-
-        .event-dot {
-            left: -21px;
-            width: 13px;
-            height: 13px;
-            border-width: 2px;
-        }
-
-        .event h4 {
-            font-size: 10px;
-        }
-
-        .event p {
-            margin: 3px 0;
-            font-size: 9px;
-        }
-
-        .event small {
-            font-size: 8px;
-        }
-
-        .note {
-            margin-top: 12px;
-            padding: 9px 11px;
-            font-size: 9px;
-        }
-
-        .btn {
-            padding: 7px 11px;
-            font-size: 9px;
-        }
-
-        .flash {
-            padding: 9px 11px;
-            margin-bottom: 14px;
-            font-size: 9px;
-        }
-
-        .empty {
-            padding: 35px 10px;
-            font-size: 9px;
-        }
-
-        .empty i {
-            font-size: 28px;
-            margin-bottom: 8px;
-        }
-
-        @media(max-width:1000px) {
-            .main {
-                padding: 20px 15px 28px;
+            .progress-item {
+                font-size: 8px;
             }
 
-            .topbar {
-                padding: 0 15px;
-            }
-        }
-
-        @media(max-width:650px) {
-            html {
-                font-size: 60%;
-            }
-
-            .topbar {
-                min-height: 56px;
-            }
-
-            .main {
-                padding: 16px 10px 22px;
-            }
-
-            .hero {
-                padding: 15px;
-            }
-
-            .panel {
-                padding: 15px;
-            }
-
-            .map {
+            #trackMap {
                 height: 310px;
             }
-        }
 
-        @media(max-width:430px) {
-            .info-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .order-card {
-                flex-basis: 190px;
+            .courier-box {
+                align-items: flex-start;
+                flex-direction: column;
             }
         }
     </style>
+
 </head>
 
 <body>
-    <header class="topbar">
-        <div class="topbar-left">
-            <a href="akun-pelanggan.php" class="back-btn" title="Kembali">
-                <i class="fas fa-arrow-left"></i>
+
+    <!-- =====================================================
+         HEADER
+    ====================================================== -->
+
+    <header class="top">
+
+        <div class="topin">
+
+            <a
+                href="<?= eTrack($backUrl) ?>"
+                class="brand">
+                <i class="fas fa-mug-hot"></i>
+                TOKU COFFEE
             </a>
-            <a href="produk.php" class="logo">
-                <i class="fas fa-mug-hot"></i> TOKU COFFEE
-            </a>
-            <span class="divider"></span>
-            <div class="page-title">
-                <h2>Lacak Pengiriman</h2>
-                <p>Pantau pesanan seperti halaman tracking marketplace.</p>
+
+            <div class="header-actions">
+
+                <a
+                    href="<?= eTrack($backUrl) ?>"
+                    class="top-btn">
+                    <i class="fas <?= $role === 'customer' ? 'fa-store' : 'fa-arrow-left' ?>"></i>
+                    <span><?= eTrack($backLabel) ?></span>
+                </a>
+
             </div>
+
         </div>
 
-        <div class="topbar-right">
-            <div class="customer-chip">
-                <i class="fas fa-user-circle"></i>
-                <span><?= eTrack($_SESSION['full_name'] ?? $_SESSION['username'] ?? 'Customer') ?></span>
-            </div>
-            <a href="produk.php" class="btn"><i class="fas fa-store"></i> Belanja</a>
-        </div>
     </header>
 
-    <main class="main">
-        <div class="breadcrumb">
-            <a href="akun-pelanggan.php">Akun Saya</a>
-            <i class="fas fa-chevron-right"></i>
-            <span>Pesanan</span>
-            <i class="fas fa-chevron-right"></i>
-            <strong>Pelacakan</strong>
+    <!-- =====================================================
+         PAGE
+    ====================================================== -->
+
+    <main class="page">
+
+        <div class="page-title">
+
+            <h1>Lacak Pengiriman</h1>
+
+            <p>
+                Pantau status, resi, estimasi tiba, posisi kurir,
+                dan perjalanan pesanan.
+            </p>
+
         </div>
 
-        <?php if ($error): ?>
-            <div class="flash error"><i class="fas fa-circle-exclamation"></i> <?= eTrack($error) ?></div>
+        <?php if ($dbError): ?>
+
+            <div class="error-box">
+                <i class="fas fa-circle-exclamation"></i>
+                <?= eTrack($dbError) ?>
+            </div>
+
         <?php endif; ?>
 
-        <div class="section-heading">
-            <h2>Pesanan Saya</h2>
-            <p>Pilih pesanan untuk melihat status, kurir, peta, dan riwayat perjalanan.</p>
-        </div>
+        <?php if ($error): ?>
+
+            <div class="error-box">
+                <i class="fas fa-circle-exclamation"></i>
+                <?= eTrack($error) ?>
+            </div>
+
+        <?php endif; ?>
+
+        <!-- =====================================================
+             DAFTAR PESANAN
+        ====================================================== -->
 
         <?php if ($orders): ?>
-            <div class="orders">
-                <?php foreach ($orders as $o): ?>
-                    <?php
-                    $miniStatus = $o['shipping_status'] ?: $o['status'];
-                    $miniLabel = $labels[$miniStatus] ?? $miniStatus;
-                    $miniClass = statusClassTrack($miniStatus);
-                    ?>
-                    <a class="order-card <?= (int)$o['id'] === $pesananId ? 'active' : '' ?>" href="tracking.php?pesanan=<?= (int)$o['id'] ?>">
-                        <div class="order-top">
-                            <span class="order-icon"><i class="fas fa-box"></i></span>
-                            <span class="order-status-mini <?= eTrack($miniClass) ?>"><?= eTrack($miniLabel) ?></span>
-                        </div>
-                        <strong><?= eTrack($o['invoice']) ?></strong>
-                        <small><?= eTrack($o['tanggal_pesanan']) ?></small>
-                        <small><?= rupiahSalesTrack($o['total'] ?? 0) ?></small>
-                    </a>
-                <?php endforeach; ?>
+
+            <div class="orders-wrap">
+
+                <div class="orders">
+
+                    <?php foreach ($orders as $order): ?>
+
+                        <?php
+                        $orderShippingStatus = $order['shipping_status'] ?? '';
+                        $orderStatusText = $orderShippingStatus !== ''
+                            ? labelStatusTrack($orderShippingStatus)
+                            : ($order['status'] ?? 'Menunggu');
+                        ?>
+
+                        <a
+                            href="tracking.php?pesanan=<?= (int)$order['id'] ?>"
+                            class="order-card <?= (int)$order['id'] === $pesananId ? 'active' : '' ?>">
+
+                            <strong>
+                                <?= eTrack($order['invoice']) ?>
+                            </strong>
+
+                            <small>
+                                <?= eTrack(waktuTrack($order['tanggal_pesanan'])) ?>
+                            </small>
+
+                            <small>
+                                <?= eTrack($orderStatusText) ?>
+                            </small>
+
+                        </a>
+
+                    <?php endforeach; ?>
+
+                </div>
+
             </div>
+
         <?php endif; ?>
 
         <?php if ($shipment): ?>
+
+            <!-- =================================================
+                 HERO DETAIL
+            ================================================== -->
+
             <section class="hero">
+
                 <div class="hero-top">
+
                     <div>
-                        <div class="eyebrow">Pesanan <?= eTrack($shipment['invoice']) ?></div>
-                        <h1><?= eTrack($currentLabel) ?></h1>
-                        <div class="address"><i class="fas fa-location-dot"></i> <?= eTrack($shipment['alamat_pengiriman'] ?? $shipment['tujuan_label'] ?? '-') ?></div>
+
+                        <div class="invoice-label">
+                            Pesanan <?= eTrack($shipment['invoice']) ?>
+                        </div>
+
+                        <h2>
+                            <?= eTrack($statusLabel) ?>
+                        </h2>
+
+                        <div class="destination">
+
+                            <i class="fas fa-location-dot"></i>
+
+                            <?= eTrack(
+                                $shipment['alamat_pengiriman']
+                                    ?: ($shipment['tujuan_label'] ?? 'Alamat tujuan belum tersedia')
+                            ) ?>
+
+                        </div>
+
                     </div>
-                    <span class="badge <?= eTrack($currentClass) ?>"><i class="fas fa-circle"></i><?= eTrack($currentLabel) ?></span>
+
+                    <span class="badge <?= eTrack($statusClass) ?>">
+                        <?= eTrack($statusLabel) ?>
+                    </span>
+
                 </div>
 
-                <?php if (!$isCancelled): ?>
+                <?php if ($shippingStatus !== 'Dibatalkan'): ?>
+
                     <div class="progress">
-                        <?php foreach ($trackingSteps as $idx => $step): ?>
-                            <?php $done = $progressIndex >= $idx;
-                            $current = $progressIndex === $idx; ?>
-                            <div class="step <?= $done ? 'done' : '' ?> <?= $current ? 'current' : '' ?>">
-                                <span class="step-dot"><i class="fas <?= eTrack($step['icon']) ?>"></i></span>
-                                <span><?= eTrack($step['label']) ?></span>
+
+                        <div class="progress-item <?= $progress >= 1 ? 'done' : '' ?> <?= $progress === 1 ? 'current' : '' ?>">
+
+                            <div class="progress-dot">
+                                <i class="fas fa-clipboard-check"></i>
                             </div>
-                        <?php endforeach; ?>
+
+                            Pesanan Diproses
+
+                        </div>
+
+                        <div class="progress-item <?= $progress >= 2 ? 'done' : '' ?> <?= $progress === 2 ? 'current' : '' ?>">
+
+                            <div class="progress-dot">
+                                <i class="fas fa-truck-fast"></i>
+                            </div>
+
+                            Sedang Dikirim
+
+                        </div>
+
+                        <div class="progress-item <?= $progress >= 3 ? 'done' : '' ?> <?= $progress === 3 ? 'current' : '' ?>">
+
+                            <div class="progress-dot">
+                                <i class="fas fa-circle-check"></i>
+                            </div>
+
+                            Pesanan Diterima
+
+                        </div>
+
                     </div>
+
                 <?php else: ?>
-                    <div class="cancel-note"><i class="fas fa-circle-xmark"></i> Pesanan ini dibatalkan dan tidak melanjutkan proses pengiriman.</div>
+
+                    <div class="progress">
+
+                        <div class="progress-item current" style="grid-column:1/-1">
+
+                            <div class="progress-dot" style="margin-bottom:6px">
+                                <i class="fas fa-xmark"></i>
+                            </div>
+
+                            Pengiriman dibatalkan
+
+                        </div>
+
+                    </div>
+
                 <?php endif; ?>
 
                 <div class="info-grid">
-                    <div class="info-box"><strong>NO. RESI</strong><span><?= eTrack($shipment['resi'] ?: 'Belum tersedia') ?></span></div>
-                    <div class="info-box"><strong>JASA / KURIR</strong><span><?= eTrack($shipment['kurir_nama'] ?: ($shipment['nama_jasa'] ?: '-')) ?></span></div>
-                    <div class="info-box"><strong>ESTIMASI TIBA</strong><span><?= $shipment['estimasi_tiba'] ? eTrack(date('d M Y', strtotime($shipment['estimasi_tiba']))) : 'Belum tersedia' ?></span></div>
-                    <div class="info-box"><strong>STATUS GPS</strong><span><i class="fas fa-location-crosshairs"></i> <?= eTrack(ucfirst($shipment['gps_status'] ?? 'offline')) ?></span></div>
+
+                    <div class="info-box">
+
+                        <strong>NO. RESI</strong>
+
+                        <span>
+                            <?= eTrack($shipment['resi'] ?: 'Belum tersedia') ?>
+                        </span>
+
+                    </div>
+
+                    <div class="info-box">
+
+                        <strong>JASA / KURIR</strong>
+
+                        <span>
+                            <?= eTrack($namaKurirTampil) ?>
+                        </span>
+
+                    </div>
+
+                    <div class="info-box">
+
+                        <strong>ESTIMASI TIBA</strong>
+
+                        <span>
+                            <?php if (!empty($shipment['estimasi_tiba'])): ?>
+                                <?= eTrack(date('d M Y', strtotime($shipment['estimasi_tiba']))) ?>
+                            <?php else: ?>
+                                Belum tersedia
+                            <?php endif; ?>
+                        </span>
+
+                    </div>
+
+                    <div class="info-box">
+
+                        <strong>STATUS GPS</strong>
+
+                        <span class="<?= ($shipment['gps_status'] ?? '') === 'online' ? 'gps-online' : 'gps-offline' ?>">
+                            <?= eTrack(ucfirst($shipment['gps_status'] ?? 'offline')) ?>
+                        </span>
+
+                    </div>
+
                 </div>
 
-                <div class="hero-actions">
-                    <?php if ($shipment['kurir_telepon']): ?>
-                        <a class="btn green" href="tel:<?= eTrack($shipment['kurir_telepon']) ?>"><i class="fas fa-phone"></i> Hubungi Kurir</a>
-                    <?php endif; ?>
-                    <?php if ($shipment['resi'] && (stripos((string)$shipment['nama_jasa'], 'J&T') !== false || stripos((string)$shipment['nama_jasa'], 'JNT') !== false)): ?>
-                        <a class="btn" target="_blank" rel="noopener" href="https://www.jet.co.id/track"><i class="fas fa-up-right-from-square"></i> Lacak di J&T</a>
-                    <?php endif; ?>
-                </div>
             </section>
 
-            <?php if ($shipment['pengiriman_id']): ?>
-                <div class="grid">
-                    <section class="panel">
-                        <div class="panel-header">
+            <?php if (!empty($shipment['pengiriman_id'])): ?>
+
+                <div class="tracking-grid">
+
+                    <!-- =========================================
+                         MAP
+                    ========================================== -->
+
+                    <section class="card">
+
+                        <div class="card-header">
+
                             <div>
-                                <h2>Posisi Pengiriman</h2>
-                                <p>Lokasi kurir terakhir yang tersimpan di sistem.</p>
+                                <h3>Posisi Pengiriman</h3>
+                                <div class="card-subtitle">
+                                    Lokasi terakhir kurir dari sistem Toku Coffee
+                                </div>
                             </div>
-                            <i class="fas fa-map-location-dot"></i>
+
+                            <i
+                                class="fas fa-map-location-dot"
+                                style="font-size:17px;color:#557a95"></i>
+
                         </div>
-                        <div id="trackMap" class="map"></div>
-                        <div class="map-note"><i class="fas fa-circle-info"></i> Titik kurir dan tujuan hanya menggunakan koordinat yang tersedia pada data pengiriman Toku Coffee.</div>
+
+                        <div id="trackMap"></div>
+
+                        <?php if ($hasGps): ?>
+
+                            <div class="actions">
+
+                                <a
+                                    class="action-btn"
+                                    target="_blank"
+                                    rel="noopener"
+                                    href="https://www.google.com/maps?q=<?= urlencode((string)$gpsLat) ?>,<?= urlencode((string)$gpsLng) ?>">
+                                    <i class="fas fa-location-dot"></i>
+                                    Buka Google Maps
+                                </a>
+
+                            </div>
+
+                            <p class="map-note">
+                                GPS terakhir diperbarui:
+                                <?= eTrack(waktuTrack($shipment['gps_update'])) ?>
+                            </p>
+
+                        <?php else: ?>
+
+                            <p class="map-note">
+                                Lokasi GPS kurir belum tersedia.
+                            </p>
+
+                        <?php endif; ?>
+
+                        <div class="courier-box">
+
+                            <div class="courier-main">
+
+                                <div class="courier-icon">
+                                    <i class="fas fa-motorcycle"></i>
+                                </div>
+
+                                <div class="courier-info">
+
+                                    <strong>
+                                        <?= eTrack($namaKurirTampil) ?>
+                                    </strong>
+
+                                    <span>
+                                        <?= eTrack(
+                                            $teleponKurir !== ''
+                                                ? $teleponKurir
+                                                : 'Nomor kurir belum tersedia'
+                                        ) ?>
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+                            <?php if ($teleponKurir !== ''): ?>
+
+                                <a
+                                    href="tel:<?= eTrack($teleponKurir) ?>"
+                                    class="call-btn">
+                                    <i class="fas fa-phone"></i>
+                                    Hubungi
+                                </a>
+
+                            <?php endif; ?>
+
+                        </div>
+
                     </section>
 
-                    <section class="panel">
-                        <div class="panel-header">
+                    <!-- =========================================
+                         TIMELINE
+                    ========================================== -->
+
+                    <section class="card">
+
+                        <div class="card-header">
+
                             <div>
-                                <h2>Detail Pengiriman</h2>
-                                <p>Informasi kurir dan riwayat perjalanan.</p>
+                                <h3>Perjalanan Paket</h3>
+                                <div class="card-subtitle">
+                                    Riwayat perubahan status pengiriman
+                                </div>
                             </div>
-                            <i class="fas fa-truck-fast"></i>
-                        </div>
 
-                        <div class="courier-card">
-                            <div class="courier-avatar"><i class="fas fa-user-shield"></i></div>
-                            <div class="courier-main">
-                                <strong><?= eTrack($shipment['kurir_nama'] ?: ($shipment['nama_jasa'] ?: 'Kurir')) ?></strong>
-                                <small><?= eTrack($shipment['nama_jasa'] ?: '-') ?></small>
-                            </div>
-                            <?php if ($shipment['kurir_telepon']): ?>
-                                <a class="call-btn" href="tel:<?= eTrack($shipment['kurir_telepon']) ?>" title="Hubungi kurir"><i class="fas fa-phone"></i></a>
-                            <?php endif; ?>
-                        </div>
+                            <i
+                                class="fas fa-route"
+                                style="font-size:16px;color:#527853"></i>
 
-                        <div class="delivery-row">
-                            <div><strong>STATUS PENGIRIMAN</strong><span><?= eTrack($currentLabel) ?></span></div>
-                            <span class="tracking-chip <?= ($shipment['gps_status'] ?? 'offline') === 'online' ? 'online' : 'offline' ?>"><i class="fas fa-location-dot"></i><?= eTrack(ucfirst($shipment['gps_status'] ?? 'offline')) ?></span>
-                        </div>
-                        <div class="delivery-row">
-                            <div><strong>TUJUAN</strong><span><?= eTrack($shipment['tujuan_label'] ?: ($shipment['alamat_pengiriman'] ?? '-')) ?></span></div>
-                        </div>
-                        <div class="delivery-row">
-                            <div><strong>UPDATE GPS TERAKHIR</strong><span><?= $shipment['gps_update'] ? eTrack(waktuTrack($shipment['gps_update'])) : '-' ?></span></div>
-                        </div>
-
-                        <div style="margin:1.3rem 0 1rem;border-top:.1rem solid #eee"></div>
-
-                        <div class="panel-header" style="margin-bottom:1rem">
-                            <div>
-                                <h2>Perjalanan Paket</h2>
-                                <p>Riwayat status dari sistem.</p>
-                            </div>
-                            <i class="fas fa-route"></i>
                         </div>
 
                         <?php if ($events): ?>
+
                             <div class="timeline">
-                                <?php foreach (array_reverse($events) as $idx => $event): ?>
-                                    <div class="event <?= $idx === 0 ? 'active' : '' ?>">
+
+                                <?php foreach (array_reverse($events) as $index => $event): ?>
+
+                                    <div class="event <?= $index === 0 ? 'active' : '' ?>">
+
                                         <span class="event-dot"></span>
-                                        <h4><?= eTrack($event['judul']) ?></h4>
-                                        <p><?= eTrack($event['keterangan']) ?></p>
-                                        <small><?= eTrack(waktuTrack($event['waktu_event'])) ?><?= $event['lokasi'] ? ' • ' . eTrack($event['lokasi']) : '' ?></small>
+
+                                        <h4>
+                                            <?= eTrack($event['judul']) ?>
+                                        </h4>
+
+                                        <?php if (!empty($event['keterangan'])): ?>
+
+                                            <p>
+                                                <?= eTrack($event['keterangan']) ?>
+                                            </p>
+
+                                        <?php endif; ?>
+
+                                        <small>
+                                            <?= eTrack(waktuTrack($event['waktu_event'])) ?>
+
+                                            <?php if (!empty($event['lokasi'])): ?>
+                                                • <?= eTrack($event['lokasi']) ?>
+                                            <?php endif; ?>
+                                        </small>
+
                                     </div>
+
                                 <?php endforeach; ?>
+
                             </div>
+
                         <?php else: ?>
-                            <div class="empty"><i class="fas fa-route"></i>Belum ada update tracking dari kurir.</div>
+
+                            <div class="empty">
+
+                                <i class="fas fa-route"></i>
+
+                                Belum ada pembaruan tracking.
+
+                            </div>
+
                         <?php endif; ?>
 
-                        <div class="note"><i class="fas fa-circle-info"></i> Status mengikuti pembaruan dari admin/staff. Saat status menjadi <b>Pesanan Diterima</b>, pesanan dianggap selesai.</div>
+                        <div class="note">
+
+                            <i class="fas fa-circle-info"></i>
+
+                            Status pengiriman akan mengikuti pembaruan dari
+                            admin/staff melalui halaman Sales.
+
+                        </div>
+
                     </section>
+
                 </div>
+
             <?php else: ?>
-                <section class="panel">
-                    <div class="empty"><i class="fas fa-box-open"></i>Pesanan ini belum memiliki jasa pengiriman.</div>
+
+                <section class="card">
+
+                    <div class="empty">
+
+                        <i class="fas fa-box-open"></i>
+
+                        Pesanan ini belum memiliki jasa pengiriman.
+
+                    </div>
+
                 </section>
+
             <?php endif; ?>
 
-        <?php elseif (!$error): ?>
-            <section class="panel">
-                <div class="empty"><i class="fas fa-box-open"></i>Belum ada pesanan yang dapat dilacak.</div>
+        <?php elseif (!$error && !$dbError): ?>
+
+            <section class="card">
+
+                <div class="empty">
+
+                    <i class="fas fa-box-open"></i>
+
+                    Belum ada pesanan yang dapat dilacak.
+
+                </div>
+
             </section>
+
         <?php endif; ?>
+
     </main>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <?php if ($shipment && $shipment['pengiriman_id'] && $shipment['gps_lat'] !== null && $shipment['gps_lng'] !== null): ?>
+    <?php if ($hasGps): ?>
+
         <script>
-            const courierLat = <?= (float)$shipment['gps_lat'] ?>;
-            const courierLng = <?= (float)$shipment['gps_lng'] ?>;
+            const gpsLat = <?= json_encode((float)$gpsLat) ?>;
+            const gpsLng = <?= json_encode((float)$gpsLng) ?>;
 
-            const m = L.map('trackMap').setView([courierLat, courierLng], 15);
+            const trackMap = L.map('trackMap', {
+                scrollWheelZoom: false
+            }).setView([gpsLat, gpsLng], 15);
 
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-                attribution: '&copy; OpenStreetMap'
-            }).addTo(m);
+            L.tileLayer(
+                'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap contributors'
+                }
+            ).addTo(trackMap);
 
-            const courier = L.marker([courierLat, courierLng])
-                .addTo(m)
+            const courierMarker = L.marker([
+                gpsLat,
+                gpsLng
+            ]).addTo(trackMap);
+
+            courierMarker
                 .bindPopup(
-                    '<b><?= eTrack($shipment['nama_jasa'] ?: $shipment['kurir_nama']) ?></b><br>' +
-                    'Lokasi kurir saat ini<br>' +
-                    'GPS: ' + courierLat.toFixed(7) + ', ' + courierLng.toFixed(7)
+                    '<b><?= eTrack($namaKurirTampil) ?></b><br>' +
+                    'Lokasi kurir terakhir'
                 )
                 .openPopup();
 
-            <?php if ($shipment['tujuan_lat'] !== null && $shipment['tujuan_lng'] !== null): ?>
-                const tujuanLat = <?= (float)$shipment['tujuan_lat'] ?>;
-                const tujuanLng = <?= (float)$shipment['tujuan_lng'] ?>;
+            <?php if ($hasDestination): ?>
 
-                const dest = L.marker([tujuanLat, tujuanLng])
-                    .addTo(m)
-                    .bindPopup(
-                        '<b>Tujuan Pengiriman</b><br>' +
-                        '<?= eTrack($shipment['tujuan_label']) ?>'
-                    );
+                const tujuanLat = <?= json_encode((float)$tujuanLat) ?>;
+                const tujuanLng = <?= json_encode((float)$tujuanLng) ?>;
 
-                L.polyline([
-                    [courierLat, courierLng],
-                    [tujuanLat, tujuanLng]
-                ], {
-                    dashArray: '8 7'
-                }).addTo(m);
+                const destinationMarker = L.marker([
+                    tujuanLat,
+                    tujuanLng
+                ]).addTo(trackMap);
 
-                m.fitBounds([
-                    [courierLat, courierLng],
-                    [tujuanLat, tujuanLng]
-                ], {
-                    padding: [20, 20]
-                });
+                destinationMarker.bindPopup(
+                    '<b>Tujuan</b><br><?= eTrack($destinationLabel !== '' ? $destinationLabel : 'Alamat tujuan') ?>'
+                );
+
+                L.polyline(
+                    [
+                        [gpsLat, gpsLng],
+                        [tujuanLat, tujuanLng]
+                    ], {
+                        color: '#557a95',
+                        weight: 3,
+                        dashArray: '7 7'
+                    }
+                ).addTo(trackMap);
+
+                trackMap.fitBounds(
+                    [
+                        [gpsLat, gpsLng],
+                        [tujuanLat, tujuanLng]
+                    ], {
+                        padding: [25, 25]
+                    }
+                );
+
             <?php endif; ?>
 
-            setTimeout(() => location.reload(), 30000);
+            setTimeout(function() {
+                location.reload();
+            }, 30000);
         </script>
+
     <?php else: ?>
+
         <script>
-            const el = document.getElementById('trackMap');
-            if (el) {
-                el.innerHTML = `
-                    <div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem;color:#999;">
-                        <div>
-                            <i class="fas fa-location-crosshairs" style="font-size:3.5rem;display:block;margin-bottom:1rem;"></i>
-                            Lokasi GPS kurir belum tersedia.
-                        </div>
-                    </div>
-                `;
+            const mapElement = document.getElementById('trackMap');
+
+            if (mapElement) {
+                mapElement.innerHTML =
+                    '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:#999;font-size:11px">' +
+                    '<i class="fas fa-location-crosshairs" style="margin-right:6px"></i>' +
+                    'Lokasi GPS kurir belum tersedia.' +
+                    '</div>';
             }
         </script>
+
     <?php endif; ?>
 
 </body>

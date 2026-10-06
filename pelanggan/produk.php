@@ -8,14 +8,19 @@ if (file_exists("../config/notifikasi.php")) {
 }
 
 /* =====================================================
-   CEK LOGIN CUSTOMER
+   SESSION
 ===================================================== */
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-if (!isset($_SESSION['user_id'])) {
+
+/* =====================================================
+   CEK LOGIN CUSTOMER
+===================================================== */
+
+if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
     header("Location: ../login/login.php");
     exit;
 }
@@ -25,6 +30,15 @@ $role = $_SESSION['role'] ?? '';
 if ($role !== 'customer') {
     header("Location: ../login/login.php?error=akses_ditolak");
     exit;
+}
+
+
+/* =====================================================
+   CEK DATABASE
+===================================================== */
+
+if (!isset($conn) || !($conn instanceof mysqli)) {
+    die("Koneksi database tidak tersedia.");
 }
 
 
@@ -63,7 +77,7 @@ if (!function_exists('e')) {
    DATA USER
 ===================================================== */
 
-$userId = $_SESSION['user_id'] ?? '';
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
 $namaUser =
     $_SESSION['full_name']
@@ -80,13 +94,19 @@ $emailUser =
 
 
 /* =====================================================
-   DATA USER DARI DATABASE
+   AMBIL DATA USER DARI DATABASE
 ===================================================== */
 
-if (!empty($userId)) {
+if ($userId > 0) {
 
-    $stmtUser = @$conn->prepare("
-        SELECT *
+    $stmtUser = $conn->prepare("
+        SELECT
+            id,
+            full_name,
+            username,
+            email,
+            role,
+            status
         FROM users
         WHERE id = ?
         LIMIT 1
@@ -137,15 +157,17 @@ if (!empty($userId)) {
    AVATAR
 ===================================================== */
 
-$avatarName =
-    urlencode($namaUser);
+$avatarName = urlencode($namaUser);
 
 
 /* =====================================================
    SESSION KERANJANG
 ===================================================== */
 
-if (!isset($_SESSION['keranjang'])) {
+if (
+    !isset($_SESSION['keranjang']) ||
+    !is_array($_SESSION['keranjang'])
+) {
     $_SESSION['keranjang'] = [];
 }
 
@@ -168,13 +190,28 @@ if (
             (int)($_POST['qty'] ?? 1)
         );
 
+    $kategoriPost =
+        trim(
+            $_POST['kategori'] ?? ''
+        );
+
+
+    /* =================================================
+       VALIDASI ID PRODUK
+    ================================================== */
 
     if ($idProduk <= 0) {
 
-        header(
-            "Location: produk.php?error=produk_tidak_valid"
-        );
+        $url =
+            "produk.php?error=produk_tidak_valid";
 
+        if ($kategoriPost !== '') {
+            $url .=
+                "&kategori="
+                . urlencode($kategoriPost);
+        }
+
+        header("Location: " . $url);
         exit;
     }
 
@@ -183,19 +220,17 @@ if (
        CEK PRODUK
     ================================================== */
 
-    $stmtProduk =
-        @$conn->prepare("
-            SELECT
-                id,
-                nama_produk,
-                harga,
-                gambar,
-                status
-            FROM produk
-            WHERE id = ?
-            LIMIT 1
-        ");
-
+    $stmtProduk = $conn->prepare("
+        SELECT
+            id,
+            nama_produk,
+            harga,
+            gambar,
+            status
+        FROM produk
+        WHERE id = ?
+        LIMIT 1
+    ");
 
     if (!$stmtProduk) {
 
@@ -237,6 +272,10 @@ if (
         $resultProduk->fetch_assoc();
 
 
+    /* =================================================
+       CEK STATUS PRODUK
+    ================================================== */
+
     if (
         strtolower(
             trim(
@@ -264,11 +303,15 @@ if (
 
     $ditemukan = false;
 
-
     foreach (
         $_SESSION['keranjang']
         as $index => $item
     ) {
+
+        if (!is_array($item)) {
+            continue;
+        }
+
 
         $itemId =
             (int)(
@@ -288,20 +331,15 @@ if (
                 );
 
 
-            $_SESSION['keranjang'][$index]['id'] =
-                $idProduk;
+            $_SESSION['keranjang'][$index] = [
 
-            $_SESSION['keranjang'][$index]['qty'] =
-                $jumlahLama + $qty;
+                'id' =>
+                $idProduk,
 
+                'qty' =>
+                $jumlahLama + $qty
 
-            unset(
-                $_SESSION['keranjang'][$index]['id_produk']
-            );
-
-            unset(
-                $_SESSION['keranjang'][$index]['jumlah']
-            );
+            ];
 
 
             $ditemukan = true;
@@ -333,20 +371,14 @@ if (
        REDIRECT
     ================================================== */
 
-    $redirectKategori =
-        $_GET['kategori']
-        ?? $_POST['kategori']
-        ?? '';
-
     $url =
         "produk.php?success=ditambahkan";
 
-
-    if (!empty($redirectKategori)) {
+    if ($kategoriPost !== '') {
 
         $url .=
             "&kategori="
-            . urlencode($redirectKategori);
+            . urlencode($kategoriPost);
     }
 
 
@@ -364,17 +396,23 @@ if (
 
 $jumlahKeranjang = 0;
 
-
 foreach (
     $_SESSION['keranjang']
     as $item
 ) {
 
+    if (!is_array($item)) {
+        continue;
+    }
+
     $jumlahKeranjang +=
-        (int)(
-            $item['qty']
-            ?? $item['jumlah']
-            ?? 0
+        max(
+            0,
+            (int)(
+                $item['qty']
+                ?? $item['jumlah']
+                ?? 0
+            )
         );
 }
 
@@ -389,29 +427,16 @@ $filterKategori =
     );
 
 
-if (
-    strtolower($filterKategori)
-    === 'minuman'
-) {
+/* Normalisasi kategori */
 
-    $filterKategori =
-        'Non-Kopi';
-}
+$kategoriLower =
+    strtolower($filterKategori);
 
 
 if (
-    strtolower($filterKategori)
-    === 'non coffee'
-) {
-
-    $filterKategori =
-        'Non-Kopi';
-}
-
-
-if (
-    strtolower($filterKategori)
-    === 'non kopi'
+    $kategoriLower === 'minuman' ||
+    $kategoriLower === 'non coffee' ||
+    $kategoriLower === 'non kopi'
 ) {
 
     $filterKategori =
@@ -451,20 +476,22 @@ $keyword =
 
 $produk = [];
 
+
+/*
+|--------------------------------------------------------------------------
+| QUERY DASAR
+|--------------------------------------------------------------------------
+*/
+
 $sql = "
 
     SELECT
 
         p.id,
-
         p.nama_produk,
-
         p.harga,
-
         p.gambar,
-
         p.deskripsi,
-
         k.nama_kategori
 
     FROM produk p
@@ -476,16 +503,17 @@ $sql = "
         p.status = 'aktif'
 
         AND (
-            LOWER(k.nama_kategori) = 'kopi'
-
-            OR LOWER(k.nama_kategori) = 'non kopi'
-
-            OR LOWER(k.nama_kategori) = 'non coffee'
-
-            OR LOWER(k.nama_kategori) = 'minuman'
+            LOWER(TRIM(k.nama_kategori)) = 'kopi'
+            OR LOWER(TRIM(k.nama_kategori)) = 'non kopi'
+            OR LOWER(TRIM(k.nama_kategori)) = 'non coffee'
+            OR LOWER(TRIM(k.nama_kategori)) = 'minuman'
         )
 
 ";
+
+
+$params = [];
+$types = "";
 
 
 /* =====================================================
@@ -495,16 +523,20 @@ $sql = "
 if ($filterKategori === 'Kopi') {
 
     $sql .= "
-        AND LOWER(k.nama_kategori) = 'kopi'
+
+        AND LOWER(TRIM(k.nama_kategori)) = 'kopi'
+
     ";
 } elseif ($filterKategori === 'Non-Kopi') {
 
     $sql .= "
+
         AND (
-            LOWER(k.nama_kategori) = 'non kopi'
-            OR LOWER(k.nama_kategori) = 'non coffee'
-            OR LOWER(k.nama_kategori) = 'minuman'
+            LOWER(TRIM(k.nama_kategori)) = 'non kopi'
+            OR LOWER(TRIM(k.nama_kategori)) = 'non coffee'
+            OR LOWER(TRIM(k.nama_kategori)) = 'minuman'
         )
+
     ";
 }
 
@@ -515,32 +547,73 @@ if ($filterKategori === 'Kopi') {
 
 if ($keyword !== '') {
 
-    $keywordSQL =
-        $conn->real_escape_string(
-            $keyword
-        );
-
     $sql .= "
 
         AND (
-            p.nama_produk LIKE '%$keywordSQL%'
-            OR p.deskripsi LIKE '%$keywordSQL%'
-            OR k.nama_kategori LIKE '%$keywordSQL%'
+            p.nama_produk LIKE ?
+            OR p.deskripsi LIKE ?
+            OR k.nama_kategori LIKE ?
         )
 
     ";
+
+    $searchValue =
+        '%' . $keyword . '%';
+
+    $params[] =
+        $searchValue;
+
+    $params[] =
+        $searchValue;
+
+    $params[] =
+        $searchValue;
+
+    $types .= "sss";
 }
 
 
+/* =====================================================
+   ORDER
+===================================================== */
+
 $sql .= "
 
-    ORDER BY p.id DESC
+    ORDER BY
+        p.id DESC
 
 ";
 
 
-$result =
-    @$conn->query($sql);
+/* =====================================================
+   EXECUTE QUERY
+===================================================== */
+
+if ($types !== '') {
+
+    $stmtProdukList =
+        $conn->prepare($sql);
+
+    if ($stmtProdukList) {
+
+        $stmtProdukList->bind_param(
+            $types,
+            ...$params
+        );
+
+        $stmtProdukList->execute();
+
+        $result =
+            $stmtProdukList->get_result();
+    } else {
+
+        $result = false;
+    }
+} else {
+
+    $result =
+        $conn->query($sql);
+}
 
 
 /* =====================================================
@@ -557,31 +630,86 @@ if (
         $result->fetch_assoc()
     ) {
 
+
         /* =============================================
-           GAMBAR
+           GAMBAR PRODUK
         ============================================== */
 
         $gambar =
-            $row['gambar'] ?? '';
+            trim(
+                $row['gambar'] ?? ''
+            );
 
 
-        if (
-            !empty($gambar) &&
-            strpos($gambar, '/') === false &&
-            strpos($gambar, '\\') === false
+        /*
+         * Folder produk:
+         * C:\xampp\htdocs\REKAYASA_E_BISNIS\upload\
+         *
+         * Karena file ini berada di:
+         * pelanggan/produk.php
+         *
+         * maka path:
+         * ../upload/nama-file.png
+         */
+
+
+        if ($gambar === '') {
+
+            $gambar =
+                "../upload/toku-americano.png";
+        } elseif (
+            strpos($gambar, 'http://') === 0 ||
+            strpos($gambar, 'https://') === 0
         ) {
 
+            /*
+             * Jika database sudah menyimpan URL
+             * jangan diubah.
+             */
+        } elseif (
+            strpos($gambar, '/') !== false ||
+            strpos($gambar, '\\') !== false
+        ) {
+
+            /*
+             * Jika database menyimpan path,
+             * gunakan path tersebut secara aman.
+             */
+
             $gambar =
-                "../image/menu-toku/"
+                ltrim(
+                    str_replace(
+                        '\\',
+                        '/',
+                        $gambar
+                    ),
+                    '/'
+                );
+
+            if (
+                strpos(
+                    $gambar,
+                    '../'
+                ) !== 0
+            ) {
+
+                $gambar =
+                    '../'
+                    . $gambar;
+            }
+        } else {
+
+            /*
+             * Nama file saja:
+             * toku-americano.png
+             *
+             * menjadi:
+             * ../upload/toku-americano.png
+             */
+
+            $gambar =
+                "../upload/"
                 . $gambar;
-        }
-
-
-        if (empty($gambar)) {
-
-            $gambar =
-                "../image/menu-toku/"
-                . "toku-americano.png";
         }
 
 
@@ -597,9 +725,7 @@ if (
             );
 
 
-        if (
-            $kategoriDB === 'kopi'
-        ) {
+        if ($kategoriDB === 'kopi') {
 
             $kategori =
                 'Kopi';
@@ -624,7 +750,7 @@ if (
         $produk[] = [
 
             'id' =>
-            $row['id'],
+            (int)$row['id'],
 
             'nama_produk' =>
             $row['nama_produk'],
@@ -643,6 +769,17 @@ if (
 
         ];
     }
+}
+
+
+/* Tutup prepared statement */
+
+if (
+    isset($stmtProdukList) &&
+    $stmtProdukList
+) {
+
+    $stmtProdukList->close();
 }
 
 
@@ -672,10 +809,6 @@ $totalProduk =
     </title>
 
 
-    <!-- =====================================================
-         GOOGLE FONT
-    ====================================================== -->
-
     <link
         rel="preconnect"
         href="https://fonts.googleapis.com">
@@ -686,22 +819,14 @@ $totalProduk =
         crossorigin>
 
     <link
-        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
 
-
-    <!-- =====================================================
-         FONT AWESOME
-    ====================================================== -->
 
     <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 
-
-    <!-- =====================================================
-         CSS UTAMA
-    ====================================================== -->
 
     <link
         rel="stylesheet"
@@ -711,16 +836,13 @@ $totalProduk =
     <style>
         /* =====================================================
            HEADER
-        ====================================================== */
+        ===================================================== */
 
         .header .logo {
 
             display: flex;
-
             align-items: center;
-
             font-weight: 700;
-
             letter-spacing: .1rem;
 
         }
@@ -743,9 +865,7 @@ $totalProduk =
         .header .user-box {
 
             display: flex;
-
             align-items: center;
-
             gap: 1.5rem;
 
         }
@@ -753,28 +873,23 @@ $totalProduk =
 
         /* =====================================================
            CART
-        ====================================================== */
+        ===================================================== */
 
         .cart-link {
 
             position: relative;
 
             width: 4.5rem;
-
             height: 4.5rem;
 
             display: flex;
-
             align-items: center;
-
             justify-content: center;
 
             border: .1rem solid #ddd;
-
             border-radius: 50%;
 
             background: #fff;
-
             color: var(--main-color);
 
             font-size: 1.8rem;
@@ -789,7 +904,6 @@ $totalProduk =
         .cart-link:hover {
 
             background: #f5f2ea;
-
             border-color: var(--main-color);
 
             transform: translateY(-2px);
@@ -802,44 +916,36 @@ $totalProduk =
             position: absolute;
 
             top: -.5rem;
-
             right: -.5rem;
 
             min-width: 2rem;
-
             height: 2rem;
 
             padding: 0 .4rem;
 
             display: flex;
-
             align-items: center;
-
             justify-content: center;
 
             background: #a94442;
-
             color: #fff;
 
             border-radius: 50%;
 
             font-size: 1rem;
-
             font-weight: 600;
 
         }
 
 
         /* =====================================================
-           USER INFO
-        ====================================================== */
+           USER
+        ===================================================== */
 
         .user-info {
 
             display: flex;
-
             align-items: center;
-
             gap: 1rem;
 
         }
@@ -850,7 +956,6 @@ $totalProduk =
             display: block;
 
             width: 4.5rem;
-
             height: 4.5rem;
 
         }
@@ -859,7 +964,6 @@ $totalProduk =
         .user-profile-link img {
 
             width: 100%;
-
             height: 100%;
 
             object-fit: cover;
@@ -905,8 +1009,8 @@ $totalProduk =
 
 
         /* =====================================================
-           PAGE HERO
-        ====================================================== */
+           PAGE
+        ===================================================== */
 
         .product-page {
 
@@ -914,6 +1018,10 @@ $totalProduk =
 
         }
 
+
+        /* =====================================================
+           HERO
+        ===================================================== */
 
         .menu-hero {
 
@@ -946,15 +1054,14 @@ $totalProduk =
             position: absolute;
 
             width: 22rem;
-
             height: 22rem;
 
             border-radius: 50%;
 
-            background: rgba(255, 255, 255, .06);
+            background:
+                rgba(255, 255, 255, .06);
 
             right: -5rem;
-
             top: -8rem;
 
         }
@@ -967,15 +1074,14 @@ $totalProduk =
             position: absolute;
 
             width: 15rem;
-
             height: 15rem;
 
             border-radius: 50%;
 
-            background: rgba(255, 255, 255, .04);
+            background:
+                rgba(255, 255, 255, .04);
 
             right: 12rem;
-
             bottom: -8rem;
 
         }
@@ -1004,7 +1110,8 @@ $totalProduk =
 
             padding: .6rem 1.4rem;
 
-            border: .1rem solid rgba(255, 255, 255, .3);
+            border:
+                .1rem solid rgba(255, 255, 255, .3);
 
             border-radius: 5rem;
 
@@ -1037,7 +1144,8 @@ $totalProduk =
 
             line-height: 1.8;
 
-            color: rgba(255, 255, 255, .85);
+            color:
+                rgba(255, 255, 255, .85);
 
             max-width: 65rem;
 
@@ -1045,8 +1153,8 @@ $totalProduk =
 
 
         /* =====================================================
-           SEARCH
-        ====================================================== */
+           TOOLS
+        ===================================================== */
 
         .menu-tools {
 
@@ -1084,7 +1192,8 @@ $totalProduk =
 
             top: 50%;
 
-            transform: translateY(-50%);
+            transform:
+                translateY(-50%);
 
             color: #888;
 
@@ -1099,15 +1208,16 @@ $totalProduk =
 
             height: 5rem;
 
-            border: .1rem solid #ddd;
+            border:
+                .1rem solid #ddd;
 
             border-radius: 1rem;
 
             padding:
-
                 0 5rem 0 4.8rem;
 
-            font-family: Poppins, sans-serif;
+            font-family:
+                Poppins, sans-serif;
 
             font-size: 1.4rem;
 
@@ -1122,7 +1232,8 @@ $totalProduk =
 
         .search-box input:focus {
 
-            border-color: var(--main-color);
+            border-color:
+                var(--main-color);
 
             box-shadow:
                 0 0 0 .3rem rgba(68, 51, 51, .08);
@@ -1135,7 +1246,6 @@ $totalProduk =
             position: absolute;
 
             right: .7rem;
-
             top: .7rem;
 
             height: 3.6rem;
@@ -1146,20 +1256,22 @@ $totalProduk =
 
             border-radius: .7rem;
 
-            background: var(--main-color);
+            background:
+                var(--main-color);
 
             color: #fff;
 
             cursor: pointer;
 
-            font-family: Poppins, sans-serif;
+            font-family:
+                Poppins, sans-serif;
 
         }
 
 
         /* =====================================================
            CATEGORY
-        ====================================================== */
+        ===================================================== */
 
         .category-filter {
 
@@ -1186,7 +1298,8 @@ $totalProduk =
 
             border-radius: 5rem;
 
-            border: .1rem solid #ddd;
+            border:
+                .1rem solid #ddd;
 
             background: #fff;
 
@@ -1203,20 +1316,25 @@ $totalProduk =
 
         .category-filter a:hover {
 
-            border-color: var(--main-color);
+            border-color:
+                var(--main-color);
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
-            transform: translateY(-2px);
+            transform:
+                translateY(-2px);
 
         }
 
 
         .category-filter a.active {
 
-            background: var(--main-color);
+            background:
+                var(--main-color);
 
-            border-color: var(--main-color);
+            border-color:
+                var(--main-color);
 
             color: #fff;
 
@@ -1224,8 +1342,8 @@ $totalProduk =
 
 
         /* =====================================================
-           PRODUCT HEADER
-        ====================================================== */
+           HEADING
+        ===================================================== */
 
         .product-heading {
 
@@ -1246,7 +1364,8 @@ $totalProduk =
 
             font-size: 2.4rem;
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
             margin: 0;
 
@@ -1277,14 +1396,15 @@ $totalProduk =
 
         .product-count strong {
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
         }
 
 
         /* =====================================================
-           PRODUCT GRID
-        ====================================================== */
+           GRID
+        ===================================================== */
 
         .product-grid {
 
@@ -1299,14 +1419,15 @@ $totalProduk =
 
 
         /* =====================================================
-           PRODUCT CARD
-        ====================================================== */
+           CARD
+        ===================================================== */
 
         .product-card {
 
             background: #fff;
 
-            border: .1rem solid #e7e3de;
+            border:
+                .1rem solid #e7e3de;
 
             border-radius: 1.5rem;
 
@@ -1324,9 +1445,11 @@ $totalProduk =
 
         .product-card:hover {
 
-            transform: translateY(-.6rem);
+            transform:
+                translateY(-.6rem);
 
-            border-color: #cbbcaf;
+            border-color:
+                #cbbcaf;
 
             box-shadow:
                 0 1.5rem 3rem rgba(68, 51, 51, .10);
@@ -1335,8 +1458,8 @@ $totalProduk =
 
 
         /* =====================================================
-           PRODUCT IMAGE
-        ====================================================== */
+           IMAGE
+        ===================================================== */
 
         .product-image {
 
@@ -1354,44 +1477,47 @@ $totalProduk =
         .product-image img {
 
             width: 100%;
-
             height: 100%;
 
             object-fit: cover;
 
-            transition: transform .4s ease;
+            transition:
+                transform .4s ease;
 
         }
 
 
         .product-card:hover .product-image img {
 
-            transform: scale(1.07);
+            transform:
+                scale(1.07);
 
         }
 
 
         /* =====================================================
-           CATEGORY BADGE
-        ====================================================== */
+           BADGE
+        ===================================================== */
 
         .product-badge {
 
             position: absolute;
 
             top: 1.2rem;
-
             left: 1.2rem;
 
             z-index: 3;
 
-            padding: .5rem 1rem;
+            padding:
+                .5rem 1rem;
 
             border-radius: 5rem;
 
-            background: rgba(255, 255, 255, .94);
+            background:
+                rgba(255, 255, 255, .94);
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
             font-size: 1.1rem;
 
@@ -1404,8 +1530,8 @@ $totalProduk =
 
 
         /* =====================================================
-           PRODUCT BODY
-        ====================================================== */
+           BODY
+        ===================================================== */
 
         .product-body {
 
@@ -1420,9 +1546,11 @@ $totalProduk =
 
             color: #98765d;
 
-            text-transform: uppercase;
+            text-transform:
+                uppercase;
 
-            letter-spacing: .08rem;
+            letter-spacing:
+                .08rem;
 
             font-weight: 600;
 
@@ -1471,7 +1599,8 @@ $totalProduk =
 
             padding-top: 1.2rem;
 
-            border-top: .1rem solid #eee;
+            border-top:
+                .1rem solid #eee;
 
         }
 
@@ -1500,19 +1629,19 @@ $totalProduk =
 
             font-weight: 700;
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
         }
 
 
         /* =====================================================
            ADD BUTTON
-        ====================================================== */
+        ===================================================== */
 
         .add-cart-btn {
 
             width: 4.2rem;
-
             height: 4.2rem;
 
             flex-shrink: 0;
@@ -1524,10 +1653,10 @@ $totalProduk =
             display: flex;
 
             align-items: center;
-
             justify-content: center;
 
-            background: var(--main-color);
+            background:
+                var(--main-color);
 
             color: #fff;
 
@@ -1542,7 +1671,8 @@ $totalProduk =
 
         .add-cart-btn:hover {
 
-            transform: scale(1.06);
+            transform:
+                scale(1.06);
 
             background: #5a4141;
 
@@ -1550,8 +1680,8 @@ $totalProduk =
 
 
         /* =====================================================
-           EMPTY STATE
-        ====================================================== */
+           EMPTY
+        ===================================================== */
 
         .empty-product {
 
@@ -1561,7 +1691,8 @@ $totalProduk =
 
             padding: 6rem 2rem;
 
-            border: .1rem dashed #d8d0c8;
+            border:
+                .1rem dashed #d8d0c8;
 
             border-radius: 1.5rem;
 
@@ -1585,7 +1716,8 @@ $totalProduk =
 
             font-size: 2rem;
 
-            color: var(--main-color);
+            color:
+                var(--main-color);
 
             margin-bottom: .8rem;
 
@@ -1605,21 +1737,21 @@ $totalProduk =
 
         /* =====================================================
            NOTIFICATION
-        ====================================================== */
+        ===================================================== */
 
         .product-notification {
 
             position: fixed;
 
             top: 9rem;
-
             right: 2rem;
 
             z-index: 9999;
 
             max-width: 35rem;
 
-            padding: 1.3rem 1.6rem;
+            padding:
+                1.3rem 1.6rem;
 
             border-radius: 1rem;
 
@@ -1634,9 +1766,14 @@ $totalProduk =
             box-shadow:
                 0 1rem 3rem rgba(0, 0, 0, .12);
 
-            border-left: .4rem solid #527853;
+            border-left:
+                .4rem solid #527853;
 
             font-size: 1.3rem;
+
+            transition:
+                opacity .3s ease,
+                transform .3s ease;
 
         }
 
@@ -1652,7 +1789,7 @@ $totalProduk =
 
         /* =====================================================
            FOOTER
-        ====================================================== */
+        ===================================================== */
 
         .footer .box-container {
 
@@ -1667,10 +1804,10 @@ $totalProduk =
 
 
         /* =====================================================
-           RESPONSIVE TABLET
-        ====================================================== */
+           TABLET
+        ===================================================== */
 
-        @media (max-width: 1100px) {
+        @media (max-width:1100px) {
 
             .product-grid {
 
@@ -1682,7 +1819,7 @@ $totalProduk =
         }
 
 
-        @media (max-width: 900px) {
+        @media (max-width:900px) {
 
             .product-grid {
 
@@ -1716,10 +1853,10 @@ $totalProduk =
 
 
         /* =====================================================
-           RESPONSIVE MOBILE
-        ====================================================== */
+           MOBILE
+        ===================================================== */
 
-        @media (max-width: 600px) {
+        @media (max-width:600px) {
 
             .product-page {
 
@@ -1730,9 +1867,11 @@ $totalProduk =
 
             .menu-hero {
 
-                padding: 2.5rem 2rem;
+                padding:
+                    2.5rem 2rem;
 
-                border-radius: 1.5rem;
+                border-radius:
+                    1.5rem;
 
             }
 
@@ -1762,7 +1901,8 @@ $totalProduk =
 
                 min-width: 100%;
 
-                margin-bottom: 1.5rem;
+                margin-bottom:
+                    1.5rem;
 
             }
 
@@ -1773,7 +1913,8 @@ $totalProduk =
 
                 flex-wrap: nowrap;
 
-                padding-bottom: .5rem;
+                padding-bottom:
+                    .5rem;
 
             }
 
@@ -1787,9 +1928,11 @@ $totalProduk =
 
             .product-heading {
 
-                align-items: flex-start;
+                align-items:
+                    flex-start;
 
-                flex-direction: column;
+                flex-direction:
+                    column;
 
                 gap: .5rem;
 
@@ -1844,7 +1987,6 @@ $totalProduk =
             .add-cart-btn {
 
                 width: 3.8rem;
-
                 height: 3.8rem;
 
             }
@@ -1852,11 +1994,12 @@ $totalProduk =
         }
 
 
-        @media (max-width: 400px) {
+        @media (max-width:400px) {
 
             .product-grid {
 
-                grid-template-columns: 1fr;
+                grid-template-columns:
+                    1fr;
 
             }
 
@@ -1952,10 +2095,9 @@ $totalProduk =
             </a>
 
 
-            <!-- AKUN SAYA -->
+            <!-- USER -->
 
             <div class="user-info">
-
 
                 <a
                     href="akun-pelanggan.php"
@@ -1963,8 +2105,10 @@ $totalProduk =
                     title="Akun Saya">
 
                     <img
-                        src="https://ui-avatars.com/api/?name=<?= $avatarName ?>&background=443&color=fff"
-                        alt="Profil">
+                        src="https://ui-avatars.com/api/?name=<?= e($avatarName) ?>&background=443&color=fff"
+                        alt="Profil"
+                        loading="lazy"
+                        onerror="this.style.display='none';">
 
                 </a>
 
@@ -1972,9 +2116,7 @@ $totalProduk =
                 <div class="user-data">
 
                     <h4>
-
                         <?= e($namaUser) ?>
-
                     </h4>
 
 
@@ -1989,9 +2131,7 @@ $totalProduk =
 
                 </div>
 
-
             </div>
-
 
         </div>
 
@@ -2009,7 +2149,7 @@ $totalProduk =
 
 
     <!-- =====================================================
-     MAIN PRODUCT PAGE
+     MAIN
 ===================================================== -->
 
     <main class="product-page">
@@ -2023,9 +2163,7 @@ $totalProduk =
 
             <section class="menu-hero">
 
-
                 <div class="menu-hero-content">
-
 
                     <div class="small-title">
 
@@ -2040,7 +2178,9 @@ $totalProduk =
 
                         Temukan Menu
 
-                        <span>Favoritmu</span>
+                        <span>
+                            Favoritmu
+                        </span>
 
                     </h1>
 
@@ -2055,9 +2195,7 @@ $totalProduk =
 
                     </p>
 
-
                 </div>
-
 
             </section>
 
@@ -2076,6 +2214,7 @@ $totalProduk =
                     action="produk.php"
                     class="search-box">
 
+
                     <?php if ($filterKategori !== ''): ?>
 
                         <input
@@ -2093,7 +2232,8 @@ $totalProduk =
                         type="text"
                         name="search"
                         value="<?= e($keyword) ?>"
-                        placeholder="Cari kopi atau minuman favorit...">
+                        placeholder="Cari kopi atau minuman favorit..."
+                        autocomplete="off">
 
 
                     <button
@@ -2146,16 +2286,14 @@ $totalProduk =
 
                 </div>
 
-
             </section>
 
 
             <!-- =================================================
-             PRODUCT HEADING
+             HEADING
         ================================================== -->
 
             <section class="product-heading">
-
 
                 <div>
 
@@ -2174,6 +2312,7 @@ $totalProduk =
                         <?php if ($keyword !== ''): ?>
 
                             Hasil pencarian untuk
+
                             <strong>
                                 "<?= e($keyword) ?>"
                             </strong>
@@ -2201,7 +2340,6 @@ $totalProduk =
 
                 </div>
 
-
             </section>
 
 
@@ -2216,7 +2354,6 @@ $totalProduk =
 
 
                     <div class="empty-product">
-
 
                         <i class="fas fa-mug-hot"></i>
 
@@ -2244,17 +2381,13 @@ $totalProduk =
 
                         </a>
 
-
                     </div>
 
 
                 <?php else: ?>
 
 
-                    <?php foreach (
-                        $produk
-                        as $item
-                    ): ?>
+                    <?php foreach ($produk as $item): ?>
 
 
                         <article
@@ -2270,7 +2403,9 @@ $totalProduk =
                                 <span
                                     class="product-badge">
 
-                                    <?= e($item['kategori']) ?>
+                                    <?= e(
+                                        $item['kategori']
+                                    ) ?>
 
                                 </span>
 
@@ -2279,28 +2414,32 @@ $totalProduk =
                                     src="<?= e($item['gambar']) ?>"
                                     alt="<?= e($item['nama_produk']) ?>"
                                     loading="lazy"
-                                    onerror="this.src='../image/menu-toku/toku-americano.png';">
-
+                                    onerror="this.onerror=null;this.src='../upload/toku-americano.png';">
 
                             </div>
 
 
                             <!-- BODY -->
 
-                            <div class="product-body">
+                            <div
+                                class="product-body">
 
 
                                 <div
                                     class="product-category">
 
-                                    <?= e($item['kategori']) ?>
+                                    <?= e(
+                                        $item['kategori']
+                                    ) ?>
 
                                 </div>
 
 
                                 <h3>
 
-                                    <?= e($item['nama_produk']) ?>
+                                    <?= e(
+                                        $item['nama_produk']
+                                    ) ?>
 
                                 </h3>
 
@@ -2349,7 +2488,7 @@ $totalProduk =
 
                                     <form
                                         method="POST"
-                                        action="produk.php<?= $filterKategori !== '' ? '?kategori=' . urlencode($filterKategori) : '' ?>">
+                                        action="produk.php">
 
                                         <input
                                             type="hidden"
@@ -2369,6 +2508,12 @@ $totalProduk =
                                             value="1">
 
 
+                                        <input
+                                            type="hidden"
+                                            name="kategori"
+                                            value="<?= e($filterKategori) ?>">
+
+
                                         <button
                                             type="submit"
                                             class="add-cart-btn"
@@ -2385,9 +2530,7 @@ $totalProduk =
 
                                 </div>
 
-
                             </div>
-
 
                         </article>
 
@@ -2596,6 +2739,10 @@ $totalProduk =
 ===================================================== -->
 
     <script>
+        /* =====================================================
+   MOBILE MENU
+===================================================== */
+
         const menuBtn =
             document.querySelector('#menu-btn');
 
@@ -2610,7 +2757,9 @@ $totalProduk =
 
             menuBtn.onclick = () => {
 
-                navbar.classList.toggle('active');
+                navbar.classList.toggle(
+                    'active'
+                );
 
                 menuBtn.classList.toggle(
                     'fa-times'
@@ -2619,24 +2768,27 @@ $totalProduk =
             };
 
 
-            window.onscroll = () => {
+            window.addEventListener(
+                'scroll',
+                () => {
 
-                navbar.classList.remove(
-                    'active'
-                );
+                    navbar.classList.remove(
+                        'active'
+                    );
 
-                menuBtn.classList.remove(
-                    'fa-times'
-                );
+                    menuBtn.classList.remove(
+                        'fa-times'
+                    );
 
-            };
+                }
+            );
 
         }
 
 
-        /* =================================================
-           NOTIFIKASI TAMBAH KERANJANG
-        ================================================== */
+        /* =====================================================
+           NOTIFIKASI
+        ===================================================== */
 
         const params =
             new URLSearchParams(
@@ -2659,13 +2811,13 @@ $totalProduk =
 
             notification.innerHTML = `
 
-            <i class="fas fa-circle-check"></i>
+        <i class="fas fa-circle-check"></i>
 
-            <span>
-                Produk berhasil ditambahkan ke keranjang.
-            </span>
+        <span>
+            Produk berhasil ditambahkan ke keranjang.
+        </span>
 
-        `;
+    `;
 
 
             document.body.appendChild(
@@ -2681,9 +2833,6 @@ $totalProduk =
                 notification.style.transform =
                     'translateX(2rem)';
 
-                notification.style.transition =
-                    '.3s ease';
-
 
                 setTimeout(() => {
 
@@ -2692,6 +2841,83 @@ $totalProduk =
                 }, 300);
 
             }, 2500);
+
+        }
+
+
+        /* =====================================================
+           NOTIFIKASI ERROR
+        ===================================================== */
+
+        const error =
+            params.get('error');
+
+
+        const errorMessages = {
+
+            'produk_tidak_valid': 'Produk tidak valid.',
+
+            'database': 'Terjadi kesalahan database.',
+
+            'produk_tidak_ditemukan': 'Produk tidak ditemukan.',
+
+            'produk_tidak_aktif': 'Produk sedang tidak tersedia.'
+
+        };
+
+
+        if (
+            error &&
+            errorMessages[error]
+        ) {
+
+            const notification =
+                document.createElement('div');
+
+
+            notification.className =
+                'product-notification';
+
+
+            notification.style.borderLeftColor =
+                '#a94442';
+
+
+            notification.innerHTML = `
+
+        <i
+            class="fas fa-circle-exclamation"
+            style="color:#a94442">
+        </i>
+
+        <span>
+            ${errorMessages[error]}
+        </span>
+
+    `;
+
+
+            document.body.appendChild(
+                notification
+            );
+
+
+            setTimeout(() => {
+
+                notification.style.opacity =
+                    '0';
+
+                notification.style.transform =
+                    'translateX(2rem)';
+
+
+                setTimeout(() => {
+
+                    notification.remove();
+
+                }, 300);
+
+            }, 3000);
 
         }
     </script>

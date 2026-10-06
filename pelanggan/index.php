@@ -1761,6 +1761,10 @@ if (
             </a>
 
 
+            <!-- FITUR SALES: PROMO & IKLAN PRODUK -->
+            <?php include __DIR__ . '/sales-promo.php'; ?>
+
+
             <div class="user-info">
 
                 <!-- AVATAR -->

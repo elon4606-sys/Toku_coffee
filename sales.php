@@ -2904,9 +2904,9 @@ $errorMessage   = $_GET['error'] ?? '';
             href="sales.php"
             class="active">
 
-            <i class="fas fa-handshake"></i>
+            <i class="fas fa-truck-fast"></i>
 
-            Sales
+            Pengiriman
 
         </a>
 
