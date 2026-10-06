@@ -3,6 +3,14 @@
 require_once "../config/koneksi.php";
 require_once "../config/session.php";
 
+/*
+ * Setup fitur pengiriman.
+ * Tidak mengubah fitur akun yang sudah ada.
+ */
+if (file_exists("../config/sales_setup.php")) {
+    require_once "../config/sales_setup.php";
+}
+
 if (file_exists("../config/notifikasi.php")) {
     require_once "../config/notifikasi.php";
 }
@@ -26,6 +34,23 @@ $role   = $_SESSION['role'] ?? '';
 if ($role !== 'customer') {
     header("Location: ../login/login.php?error=akses_ditolak");
     exit;
+}
+
+/* =====================================================
+   SIAPKAN FITUR PENGIRIMAN
+===================================================== */
+
+if (
+    function_exists('setupSalesPengiriman')
+) {
+    try {
+        setupSalesPengiriman($conn);
+    } catch (Throwable $e) {
+        /*
+         * Tidak menghentikan halaman akun
+         * apabila setup pengiriman gagal.
+         */
+    }
 }
 
 /* =====================================================
@@ -63,6 +88,58 @@ function statusClass($status)
             '-',
             trim((string)$status)
         )
+    );
+}
+
+/*
+ * Label status pengiriman.
+ */
+function shippingLabel($status)
+{
+    $status = trim((string)$status);
+
+    $labels = [
+        'Dijadwalkan'        => 'Menunggu Pick Up',
+        'Dalam Perjalanan'   => 'Sedang Dikirim',
+        'Terkirim'           => 'Pesanan Diterima',
+        'Dibatalkan'         => 'Dibatalkan'
+    ];
+
+    return $labels[$status] ?? ($status ?: '-');
+}
+
+/*
+ * Class warna status pengiriman.
+ */
+function shippingStatusClass($status)
+{
+    return strtolower(
+        str_replace(
+            ' ',
+            '-',
+            trim((string)$status)
+        )
+    );
+}
+
+/*
+ * Format tanggal estimasi.
+ */
+function formatTanggalTiba($tanggal)
+{
+    if (empty($tanggal)) {
+        return 'Belum tersedia';
+    }
+
+    $timestamp = strtotime($tanggal);
+
+    if (!$timestamp) {
+        return 'Belum tersedia';
+    }
+
+    return date(
+        'd M Y',
+        $timestamp
     );
 }
 
@@ -172,15 +249,46 @@ $pesananAktif   = 0;
 
 $orders = [];
 
+/*
+ * Pesanan customer sekaligus mengambil
+ * informasi pengiriman terakhir yang aktif.
+ */
 $stmtOrder = $conn->prepare("
     SELECT
-        id,
-        tanggal_pesanan,
-        total,
-        status
-    FROM pesanan
-    WHERE user_id = ?
-    ORDER BY id DESC
+        p.id,
+        p.invoice,
+        p.tanggal_pesanan,
+        p.total,
+        p.status,
+
+        ps.id AS pengiriman_id,
+        ps.status AS shipping_status,
+        ps.resi,
+        ps.estimasi_tiba,
+        ps.kurir_nama,
+        ps.kurir_telepon,
+
+        j.nama_jasa,
+        j.gps_status
+
+    FROM pesanan p
+
+    LEFT JOIN pengiriman_sales ps
+        ON ps.id = (
+            SELECT ps2.id
+            FROM pengiriman_sales ps2
+            WHERE ps2.pesanan_id = p.id
+            AND ps2.status <> 'Dibatalkan'
+            ORDER BY ps2.id DESC
+            LIMIT 1
+        )
+
+    LEFT JOIN jasa_pengiriman j
+        ON j.id = ps.jasa_id
+
+    WHERE p.user_id = ?
+
+    ORDER BY p.id DESC
 ");
 
 if ($stmtOrder) {
@@ -1206,6 +1314,116 @@ if (
             transform: translateY(-2px);
         }
 
+        /* =====================================================
+           TRACKING PENGIRIMAN
+        ===================================================== */
+
+        .track-btn {
+
+            display: inline-flex;
+
+            align-items: center;
+            justify-content: center;
+
+            gap: .5rem;
+
+            padding: .8rem 1.2rem;
+
+            border: .1rem solid #527853;
+
+            border-radius: .8rem;
+
+            background: #f0f7f0;
+
+            color: #527853;
+
+            font-size: 1.1rem;
+
+            text-decoration: none;
+
+            white-space: nowrap;
+
+            transition: .2s ease;
+        }
+
+        .track-btn:hover {
+
+            background: #527853;
+
+            color: #fff;
+
+            transform: translateY(-2px);
+        }
+
+        .shipping-info {
+
+            margin-top: .6rem;
+
+            font-size: 1rem;
+
+            color: #888;
+
+            line-height: 1.5;
+        }
+
+        .shipping-info strong {
+
+            color: #443;
+
+        }
+
+        .shipping-status {
+
+            display: inline-flex;
+
+            align-items: center;
+
+            gap: .4rem;
+
+            margin-top: .5rem;
+
+            padding: .35rem .7rem;
+
+            border-radius: 5rem;
+
+            background: #eef5f9;
+
+            color: #557a95;
+
+            font-size: .9rem;
+        }
+
+        .shipping-status.dijadwalkan {
+
+            color: #c68b3c;
+
+            background: #fff7e8;
+
+        }
+
+        .shipping-status.dalam-perjalanan {
+
+            color: #557a95;
+
+            background: #edf5fc;
+
+        }
+
+        .shipping-status.terkirim {
+
+            color: #527853;
+
+            background: #edf7ee;
+
+        }
+
+        .shipping-status.dibatalkan {
+
+            color: #a94442;
+
+            background: #fceeee;
+
+        }
 
         /* =====================================================
         MOBILE AKSI PESANAN
@@ -1217,7 +1435,8 @@ if (
                 gap: .6rem;
             }
 
-            .cancel-btn {
+            .cancel-btn,
+            .track-btn {
                 padding: .7rem 1rem;
                 font-size: 1rem;
             }
@@ -1412,9 +1631,10 @@ if (
         /* =====================================================
            ORDER
         ===================================================== */
+
         /* =====================================================
-   MODAL KONFIRMASI BATAL PESANAN
-===================================================== */
+           MODAL KONFIRMASI BATAL PESANAN
+        ===================================================== */
 
         .cancel-modal {
 
@@ -2188,7 +2408,8 @@ if (
                 font-size: 1.1rem;
             }
 
-            .detail-btn {
+            .detail-btn,
+            .track-btn {
                 padding: .7rem 1rem;
                 font-size: 1rem;
             }
@@ -2478,10 +2699,10 @@ if (
 
             </a>
 
-
             <div class="user-info">
 
                 <!-- AVATAR -->
+
                 <div class="user-avatar-wrapper">
 
                     <button
@@ -2495,15 +2716,18 @@ if (
 
                     </button>
 
-
                     <!-- DROPDOWN -->
+
                     <div
                         class="user-dropdown"
                         id="userDropdown">
 
                         <a href="akun-pelanggan.php">
+
                             <i class="fas fa-user"></i>
+
                             Akun Saya
+
                         </a>
 
                         <a
@@ -2511,6 +2735,7 @@ if (
                             class="logout-link">
 
                             <i class="fas fa-sign-out-alt"></i>
+
                             Logout
 
                         </a>
@@ -2519,8 +2744,8 @@ if (
 
                 </div>
 
-
                 <!-- DATA USER -->
+
                 <div class="user-data">
 
                     <h4>
@@ -2547,7 +2772,6 @@ if (
         </div>
 
     </header>
-
 
     <!-- =====================================================
      ACCOUNT
@@ -2581,7 +2805,6 @@ if (
 
         </div>
 
-
         <!-- ALERT -->
 
         <?php if ($pesanSukses): ?>
@@ -2596,7 +2819,6 @@ if (
 
         <?php endif; ?>
 
-
         <?php if ($pesanError): ?>
 
             <div class="account-alert error">
@@ -2608,7 +2830,6 @@ if (
             </div>
 
         <?php endif; ?>
-
 
         <!-- =================================================
          STATISTIK
@@ -2636,7 +2857,6 @@ if (
 
             </div>
 
-
             <div class="account-stat">
 
                 <div class="stat-icon">
@@ -2656,7 +2876,6 @@ if (
                 </div>
 
             </div>
-
 
             <div class="account-stat">
 
@@ -2683,7 +2902,6 @@ if (
 
             </div>
 
-
             <div class="account-stat">
 
                 <div class="stat-icon">
@@ -2706,13 +2924,11 @@ if (
 
         </div>
 
-
         <!-- =================================================
          ACCOUNT GRID
     ================================================== -->
 
         <div class="account-grid">
-
 
             <!-- PROFIL -->
 
@@ -2740,7 +2956,6 @@ if (
 
                 </div>
 
-
                 <div class="profile-box">
 
                     <div class="profile-avatar">
@@ -2752,7 +2967,6 @@ if (
                         <span class="online-dot"></span>
 
                     </div>
-
 
                     <div class="profile-info">
 
@@ -2776,7 +2990,6 @@ if (
 
                 </div>
 
-
                 <div class="profile-details">
 
                     <div class="detail-item">
@@ -2795,7 +3008,6 @@ if (
 
                     </div>
 
-
                     <div class="detail-item">
 
                         <label>
@@ -2811,7 +3023,6 @@ if (
                         </p>
 
                     </div>
-
 
                     <div class="detail-item">
 
@@ -2829,7 +3040,6 @@ if (
                         </p>
 
                     </div>
-
 
                     <div class="detail-item">
 
@@ -2851,7 +3061,6 @@ if (
                 </div>
 
             </div>
-
 
             <!-- REWARD -->
 
@@ -2881,7 +3090,6 @@ if (
 
                 </div>
 
-
                 <div class="reward-box">
 
                     <div class="reward-item">
@@ -2897,7 +3105,6 @@ if (
                         </p>
 
                     </div>
-
 
                     <div class="reward-item">
 
@@ -2921,7 +3128,6 @@ if (
                     </div>
 
                 </div>
-
 
                 <div style="
                 margin-top:2rem;
@@ -2947,7 +3153,6 @@ if (
                 </div>
 
             </div>
-
 
             <!-- EDIT PROFIL -->
 
@@ -2977,7 +3182,6 @@ if (
 
                 </div>
 
-
                 <form method="POST">
 
                     <div class="form-grid">
@@ -2998,7 +3202,6 @@ if (
 
                         </div>
 
-
                         <div class="form-group">
 
                             <label>
@@ -3013,7 +3216,6 @@ if (
                                         ) ?>">
 
                         </div>
-
 
                         <div class="form-group">
 
@@ -3030,7 +3232,6 @@ if (
 
                         </div>
 
-
                         <div class="form-group">
 
                             <label>
@@ -3045,7 +3246,6 @@ if (
                         </div>
 
                     </div>
-
 
                     <div class="form-actions">
 
@@ -3065,7 +3265,6 @@ if (
                 </form>
 
             </div>
-
 
             <!-- PASSWORD -->
 
@@ -3095,7 +3294,6 @@ if (
 
                 </div>
 
-
                 <form method="POST">
 
                     <div class="form-grid">
@@ -3114,7 +3312,6 @@ if (
 
                         </div>
 
-
                         <div class="form-group">
 
                             <label>
@@ -3129,7 +3326,6 @@ if (
                                 required>
 
                         </div>
-
 
                         <div class="form-group">
 
@@ -3147,7 +3343,6 @@ if (
                         </div>
 
                     </div>
-
 
                     <div class="form-actions">
 
@@ -3167,7 +3362,6 @@ if (
                 </form>
 
             </div>
-
 
             <!-- RIWAYAT PESANAN -->
 
@@ -3197,7 +3391,6 @@ if (
 
                 </div>
 
-
                 <?php if (empty($orders)): ?>
 
                     <div class="empty-box">
@@ -3209,8 +3402,10 @@ if (
                         </h3>
 
                         <p>
+
                             Kamu belum memiliki riwayat
                             pesanan di Toku Coffee.
+
                         </p>
 
                         <a
@@ -3226,7 +3421,6 @@ if (
                     </div>
 
                 <?php else: ?>
-
 
                     <div class="table-wrapper">
 
@@ -3253,13 +3447,16 @@ if (
                                     </th>
 
                                     <th>
+                                        Pengiriman
+                                    </th>
+
+                                    <th>
                                         Aksi
                                     </th>
 
                                 </tr>
 
                             </thead>
-
 
                             <tbody>
 
@@ -3274,17 +3471,22 @@ if (
 
                                             <span class="order-id">
 
-                                                ORD-<?= str_pad(
+                                                <?php
+                                                if (!empty($order['invoice'])) {
+                                                    echo e($order['invoice']);
+                                                } else {
+                                                    echo 'ORD-' . str_pad(
                                                         $order['id'],
                                                         4,
                                                         '0',
                                                         STR_PAD_LEFT
-                                                    ) ?>
+                                                    );
+                                                }
+                                                ?>
 
                                             </span>
 
                                         </td>
-
 
                                         <td>
 
@@ -3293,7 +3495,6 @@ if (
                                             ) ?>
 
                                         </td>
-
 
                                         <td>
 
@@ -3306,7 +3507,6 @@ if (
                                             </strong>
 
                                         </td>
-
 
                                         <td>
 
@@ -3325,22 +3525,136 @@ if (
 
                                         </td>
 
+                                        <td>
+
+                                            <?php if (
+                                                !empty($order['pengiriman_id'])
+                                            ): ?>
+
+                                                <div
+                                                    class="shipping-info">
+
+                                                    <strong>
+
+                                                        <?= e(
+                                                            $order['nama_jasa']
+                                                                ?: 'Jasa Pengiriman'
+                                                        ) ?>
+
+                                                    </strong>
+
+                                                    <?php if (
+                                                        !empty($order['resi'])
+                                                    ): ?>
+
+                                                        <br>
+
+                                                        Resi:
+                                                        <?= e(
+                                                            $order['resi']
+                                                        ) ?>
+
+                                                    <?php endif; ?>
+
+                                                    <br>
+
+                                                    <span
+                                                        class="shipping-status <?= e(
+                                                                                    shippingStatusClass(
+                                                                                        $order['shipping_status']
+                                                                                    )
+                                                                                ) ?>">
+
+                                                        <i
+                                                            class="fas fa-truck-fast">
+                                                        </i>
+
+                                                        <?= e(
+                                                            shippingLabel(
+                                                                $order['shipping_status']
+                                                            )
+                                                        ) ?>
+
+                                                    </span>
+
+                                                    <?php if (
+                                                        !empty($order['estimasi_tiba'])
+                                                    ): ?>
+
+                                                        <br>
+
+                                                        <span
+                                                            class="shipping-info">
+
+                                                            Estimasi:
+                                                            <strong>
+
+                                                                <?= e(
+                                                                    formatTanggalTiba(
+                                                                        $order['estimasi_tiba']
+                                                                    )
+                                                                ) ?>
+
+                                                            </strong>
+
+                                                        </span>
+
+                                                    <?php endif; ?>
+
+                                                </div>
+
+                                            <?php else: ?>
+
+                                                <span
+                                                    style="
+                                                    color:#999;
+                                                    font-size:1.1rem;
+                                                ">
+
+                                                    Belum ada pengiriman
+
+                                                </span>
+
+                                            <?php endif; ?>
+
+                                        </td>
 
                                         <td>
 
                                             <div class="order-actions">
 
+                                                <?php if (
+                                                    !empty($order['pengiriman_id'])
+                                                ): ?>
+
+                                                    <a
+                                                        href="tracking.php?pesanan=<?= (int)$order['id'] ?>"
+                                                        class="track-btn"
+                                                        title="Lacak Pengiriman">
+
+                                                        <i
+                                                            class="fas fa-location-dot">
+                                                        </i>
+
+                                                        Lacak
+
+                                                    </a>
+
+                                                <?php endif; ?>
+
                                                 <!-- DETAIL -->
+
                                                 <a
                                                     href="detail-pesanan.php?id=<?= (int)$order['id'] ?>"
                                                     class="detail-btn">
 
-                                                    <i class="fas fa-eye"></i>
+                                                    <i
+                                                        class="fas fa-eye">
+                                                    </i>
 
                                                     Detail
 
                                                 </a>
-
 
                                                 <?php
                                                 $statusOrder = strtolower(
@@ -3350,17 +3664,22 @@ if (
                                                 );
                                                 ?>
 
+                                                <!-- BATALKAN -->
 
-                                                <!-- BATALKAN -->
-                                                <!-- BATALKAN -->
-                                                <?php if ($statusOrder === 'menunggu'): ?>
+                                                <?php if (
+                                                    $statusOrder === 'menunggu'
+                                                    &&
+                                                    empty($order['pengiriman_id'])
+                                                ): ?>
 
                                                     <button
                                                         type="button"
                                                         class="cancel-btn"
                                                         onclick="bukaModalBatal(<?= (int)$order['id'] ?>)">
 
-                                                        <i class="fas fa-ban"></i>
+                                                        <i
+                                                            class="fas fa-ban">
+                                                        </i>
 
                                                         Batalkan
 
@@ -3385,7 +3704,6 @@ if (
                 <?php endif; ?>
 
             </div>
-
 
             <!-- WISHLIST -->
 
@@ -3415,7 +3733,6 @@ if (
 
                 </div>
 
-
                 <div class="empty-box">
 
                     <i class="far fa-heart"></i>
@@ -3425,8 +3742,10 @@ if (
                     </h3>
 
                     <p>
+
                         Produk favorit pelanggan
                         dapat ditampilkan di sini.
+
                     </p>
 
                     <a
@@ -3446,6 +3765,7 @@ if (
         </div>
 
     </section>
+
     <!-- =====================================================
      MODAL KONFIRMASI BATAL PESANAN
 ===================================================== -->
@@ -3530,7 +3850,6 @@ if (
 
         <div class="box-container">
 
-
             <div class="box">
 
                 <h3>
@@ -3550,7 +3869,6 @@ if (
                 </a>
 
             </div>
-
 
             <div class="box">
 
@@ -3591,7 +3909,6 @@ if (
                 </a>
 
             </div>
-
 
             <div class="box">
 
@@ -3634,7 +3951,6 @@ if (
 
             </div>
 
-
             <div class="box">
 
                 <h3>
@@ -3661,7 +3977,6 @@ if (
 
         </div>
 
-
         <div class="credit">
 
             &copy;
@@ -3679,82 +3994,141 @@ if (
     </section>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener(
+            'DOMContentLoaded',
+            function() {
 
-            const profileBtn = document.getElementById('userProfileBtn');
-            const dropdown = document.getElementById('userDropdown');
+                const profileBtn =
+                    document.getElementById(
+                        'userProfileBtn'
+                    );
 
-            if (profileBtn && dropdown) {
+                const dropdown =
+                    document.getElementById(
+                        'userDropdown'
+                    );
 
-                profileBtn.addEventListener('click', function(e) {
-                    e.stopPropagation();
+                if (
+                    profileBtn &&
+                    dropdown
+                ) {
 
-                    dropdown.classList.toggle('active');
-                });
+                    profileBtn.addEventListener(
+                        'click',
+                        function(e) {
 
-                document.addEventListener('click', function() {
-                    dropdown.classList.remove('active');
-                });
+                            e.stopPropagation();
 
-                dropdown.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                });
+                            dropdown.classList.toggle(
+                                'active'
+                            );
+
+                        }
+                    );
+
+                    document.addEventListener(
+                        'click',
+                        function() {
+
+                            dropdown.classList.remove(
+                                'active'
+                            );
+
+                        }
+                    );
+
+                    dropdown.addEventListener(
+                        'click',
+                        function(e) {
+
+                            e.stopPropagation();
+
+                        }
+                    );
+                }
+
             }
-
-        });
+        );
     </script>
+
     <!-- =====================================================
      JAVASCRIPT
 ===================================================== -->
+
     <script>
         /* =====================================================
-       MODAL BATAL PESANAN
-    ===================================================== */
+           MODAL BATAL PESANAN
+        ===================================================== */
 
-        function bukaModalBatal(pesananId) {
+        function bukaModalBatal(
+            pesananId
+        ) {
 
             const modal =
-                document.getElementById('cancelModal');
+                document.getElementById(
+                    'cancelModal'
+                );
 
             const input =
-                document.getElementById('cancelPesananId');
+                document.getElementById(
+                    'cancelPesananId'
+                );
 
-            if (!modal || !input) {
+            if (
+                !modal ||
+                !input
+            ) {
                 return;
             }
-            input.value = pesananId;
 
-            modal.classList.add('active');
+            input.value =
+                pesananId;
 
-            document.body.style.overflow = 'hidden';
+            modal.classList.add(
+                'active'
+            );
+
+            document.body.style.overflow =
+                'hidden';
         }
 
         function tutupModalBatal() {
 
             const modal =
-                document.getElementById('cancelModal');
+                document.getElementById(
+                    'cancelModal'
+                );
 
             if (!modal) {
                 return;
             }
 
-            modal.classList.remove('active');
+            modal.classList.remove(
+                'active'
+            );
 
-            document.body.style.overflow = '';
+            document.body.style.overflow =
+                '';
         }
+
         /* Klik area gelap untuk menutup */
+
         document.addEventListener(
             'click',
             function(event) {
 
                 const modal =
-                    document.getElementById('cancelModal');
+                    document.getElementById(
+                        'cancelModal'
+                    );
 
                 if (!modal) {
                     return;
                 }
 
-                if (event.target === modal) {
+                if (
+                    event.target === modal
+                ) {
 
                     tutupModalBatal();
 
@@ -3762,12 +4136,16 @@ if (
 
             }
         );
+
         /* Tombol ESC untuk menutup */
+
         document.addEventListener(
             'keydown',
             function(event) {
 
-                if (event.key === 'Escape') {
+                if (
+                    event.key === 'Escape'
+                ) {
 
                     tutupModalBatal();
 
@@ -3776,13 +4154,17 @@ if (
             }
         );
     </script>
+
     <script>
         const menuBtn =
-            document.querySelector('#menu-btn');
+            document.querySelector(
+                '#menu-btn'
+            );
 
         const navbar =
-            document.querySelector('.navbar');
-
+            document.querySelector(
+                '.navbar'
+            );
 
         if (
             menuBtn &&
@@ -3801,7 +4183,6 @@ if (
 
             };
 
-
             window.addEventListener(
                 'scroll',
                 () => {
@@ -3817,31 +4198,31 @@ if (
                 }
             );
 
-
             document.querySelectorAll(
                 '.navbar a'
-            ).forEach(link => {
+            ).forEach(
+                link => {
 
-                link.addEventListener(
-                    'click',
-                    () => {
+                    link.addEventListener(
+                        'click',
+                        () => {
 
-                        navbar.classList.remove(
-                            'active'
-                        );
+                            navbar.classList.remove(
+                                'active'
+                            );
 
-                        menuBtn.classList.remove(
-                            'fa-times'
-                        );
+                            menuBtn.classList.remove(
+                                'fa-times'
+                            );
 
-                    }
-                );
+                        }
+                    );
 
-            });
+                }
+            );
 
         }
     </script>
-
 
 </body>
 

@@ -2273,7 +2273,10 @@ $errorMessage =
             Pelanggan
 
         </a>
-
+        <a href="sales.php">
+            <i class="fas fa-truck-fast"></i>
+            Sales
+        </a>
 
         <div
             class="menu-title"
