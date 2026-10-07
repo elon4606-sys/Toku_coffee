@@ -11,7 +11,7 @@ $database = "toku_coffee";
 $port = 3307;
 
 $conn = new mysqli(
-    $host,
+    $host,  
     $user,
     $password,
     $database,

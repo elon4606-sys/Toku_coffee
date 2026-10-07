@@ -1,7 +1,10 @@
 <?php
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 require_once "../config/koneksi.php";
-require_once "../config/session.php";
 
 if (file_exists("../config/notifikasi.php")) {
     require_once "../config/notifikasi.php";
